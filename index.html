@@ -788,21 +788,33 @@
         
         familyMembers.forEach(member => memberScores[member] = 0);
         
-        async function apiCall(action, data = null) {
-            try {
-                let url = `${API_URL}?action=${action}`;
+        function apiCall(action, data = null) {
+            return new Promise((resolve) => {
+                const cbName = 'cb_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+                let url = `${API_URL}?action=${action}&callback=${cbName}`;
                 if (data) url += `&data=${encodeURIComponent(JSON.stringify(data))}`;
-                const response = await fetch(url);
-                const result = await response.json();
-                if (result.error) {
-                    console.error('API Error:', result.error);
-                    return null;
-                }
-                return result;
-            } catch (error) {
-                console.error('Fetch error:', error);
-                return null;
-            }
+
+                window[cbName] = (result) => {
+                    delete window[cbName];
+                    if (script.parentNode) script.parentNode.removeChild(script);
+                    if (result && result.error) {
+                        console.error('API Error:', result.error);
+                        resolve(null);
+                    } else {
+                        resolve(result);
+                    }
+                };
+
+                const script = document.createElement('script');
+                script.src = url;
+                script.onerror = () => {
+                    delete window[cbName];
+                    if (script.parentNode) script.parentNode.removeChild(script);
+                    console.error('API call failed:', action);
+                    resolve(null);
+                };
+                document.head.appendChild(script);
+            });
         }
         
         function getWeatherEmoji(condition) {
