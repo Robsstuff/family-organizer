@@ -788,33 +788,23 @@
         
         familyMembers.forEach(member => memberScores[member] = 0);
         
-        function apiCall(action, data = null) {
-            return new Promise((resolve) => {
-                const cbName = 'cb_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-                let url = `${API_URL}?action=${action}&callback=${cbName}`;
+        const CORS_PROXY = 'https://corsproxy.io/?';
+
+        async function apiCall(action, data = null) {
+            try {
+                let url = `${API_URL}?action=${action}`;
                 if (data) url += `&data=${encodeURIComponent(JSON.stringify(data))}`;
-
-                window[cbName] = (result) => {
-                    delete window[cbName];
-                    if (script.parentNode) script.parentNode.removeChild(script);
-                    if (result && result.error) {
-                        console.error('API Error:', result.error);
-                        resolve(null);
-                    } else {
-                        resolve(result);
-                    }
-                };
-
-                const script = document.createElement('script');
-                script.src = url;
-                script.onerror = () => {
-                    delete window[cbName];
-                    if (script.parentNode) script.parentNode.removeChild(script);
-                    console.error('API call failed:', action);
-                    resolve(null);
-                };
-                document.head.appendChild(script);
-            });
+                const response = await fetch(CORS_PROXY + encodeURIComponent(url));
+                const result = await response.json();
+                if (result.error) {
+                    console.error('API Error:', result.error);
+                    return null;
+                }
+                return result;
+            } catch (error) {
+                console.error('API call failed:', action, error);
+                return null;
+            }
         }
         
         function getWeatherEmoji(condition) {
