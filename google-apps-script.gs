@@ -87,6 +87,8 @@ function doGet(e) {
       case 'addRoutineTask': result = addRoutineTask(data); break;
       case 'toggleRoutineTask': result = toggleRoutineTask(data); break;
       case 'addBirthday': result = addBirthday(data); break;
+      case 'editBirthday': result = editBirthday(data); break;
+      case 'deleteBirthday': result = deleteBirthday(data); break;
       case 'updatePoints': result = updatePoints(data); break;
       case 'resetRecurringTasks': result = resetRecurringTasks(); break;
       
@@ -367,7 +369,7 @@ function getEvents() {
   const seen = new Set();
   
   events.forEach(event => {
-    const key = `${event.title}-${event.date}-${event.time}`;
+    const key = `${(event.title||'').toLowerCase().trim()}-${event.date}-${event.time||''}`;
     if (!seen.has(key)) {
       seen.add(key);
       uniqueEvents.push(event);
@@ -468,6 +470,20 @@ function getBirthdays() {
 function addBirthday(data) {
   const sheet = getSheet(SHEET_NAMES.BIRTHDAYS);
   sheet.appendRow([data.name, new Date(data.date)]);
+  return { success: true };
+}
+
+function editBirthday(data) {
+  const sheet = getSheet(SHEET_NAMES.BIRTHDAYS);
+  const rowIndex = data.index + 2;
+  sheet.getRange(rowIndex, 1).setValue(data.name);
+  sheet.getRange(rowIndex, 2).setValue(new Date(data.date));
+  return { success: true };
+}
+
+function deleteBirthday(data) {
+  const sheet = getSheet(SHEET_NAMES.BIRTHDAYS);
+  sheet.deleteRow(data.index + 2);
   return { success: true };
 }
 

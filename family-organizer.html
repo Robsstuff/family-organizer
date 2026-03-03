@@ -267,20 +267,36 @@
         .calendar-day:hover { border-color: var(--primary); box-shadow: var(--shadow); }
         .calendar-day.other-month { opacity: 0.3; }
         .calendar-day.today { border-color: var(--accent); border-width: 3px; background: rgba(255, 139, 61, 0.05); }
-        .calendar-day-number { font-weight: 700; font-size: 0.9rem; margin-bottom: 3px; }
-        .calendar-weather-small { font-size: 0.65rem; color: var(--text-secondary); margin-bottom: 2px; }
+        .calendar-day-number { font-weight: 700; font-size: 0.75rem; margin-bottom: 2px; }
+        .calendar-weather-small { font-size: 0.55rem; color: var(--text-secondary); margin-bottom: 2px; }
         .calendar-event-dot {
             background: var(--primary);
             color: white;
-            padding: 2px 4px;
+            padding: 1px 3px;
             border-radius: 3px;
-            font-size: 0.6rem;
+            font-size: 0.52rem;
+            font-weight: 500;
+            letter-spacing: 0.01em;
+            line-height: 1.4;
             margin-bottom: 2px;
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
             display: block;
         }
+        .achievement-item {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            padding: 0.75rem 1rem;
+            background: linear-gradient(135deg, rgba(255,139,61,0.07), rgba(26,95,122,0.07));
+            border-radius: 10px;
+            border: 1px solid var(--border);
+            margin-bottom: 0.5rem;
+        }
+        .achievement-icon { font-size: 1.5rem; width: 36px; text-align: center; }
+        .achievement-member { font-weight: 600; font-size: 0.95rem; }
+        .achievement-label { font-size: 0.8rem; color: var(--text-secondary); }
         
         .birthday-grid {
             display: grid;
@@ -507,6 +523,7 @@
             <div class="score-display">
                 <span class="score-label">FAMILY POINTS</span>
                 <span id="scoreValue">0</span>
+                <button id="notifBtn" onclick="enableNotifications()" style="display:block;margin-top:0.5rem;background:rgba(255,255,255,0.15);color:white;border:1px solid rgba(255,255,255,0.4);padding:0.25rem 0.6rem;border-radius:20px;font-size:0.68rem;cursor:pointer;width:100%;white-space:nowrap;">🔔 Enable Reminders</button>
             </div>
         </header>
 
@@ -580,6 +597,11 @@
             <div class="card">
                 <h2>🏆 Family Leaderboard</h2>
                 <div id="leaderboardFull"></div>
+            </div>
+            <div class="card">
+                <h2>🏅 Achievements</h2>
+                <p style="color:var(--text-secondary);font-size:0.9rem;margin-bottom:1rem;">Earn a badge for every 100 points!</p>
+                <div id="achievementsList"><div class="loading">Complete tasks to earn achievements!</div></div>
             </div>
         </div>
 
@@ -678,6 +700,23 @@
                     <button class="btn btn-accent" onclick="addBirthday()">Add Birthday</button>
                 </div>
                 <div class="birthday-grid" id="birthdayList"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Birthday Modal -->
+    <div class="modal-overlay" id="editBirthdayModal" onclick="if(event.target===this)closeEditBirthdayModal()">
+        <div class="modal-content" onclick="event.stopPropagation()" style="max-width:400px;">
+            <button class="modal-close" onclick="closeEditBirthdayModal()">×</button>
+            <h2 style="margin-bottom:1.5rem;">✏️ Edit Birthday</h2>
+            <input type="hidden" id="editBirthdayIndex">
+            <div class="input-group" style="flex-direction:column;gap:1rem;">
+                <input type="text" id="editBirthdayName" placeholder="Name">
+                <input type="text" id="editBirthdayDateInput" placeholder="DD/MM/YYYY (e.g., 15/03/1990)">
+                <div style="display:flex;gap:0.75rem;">
+                    <button class="btn btn-accent" onclick="saveBirthdayEdit()" style="flex:1;">Save Changes</button>
+                    <button class="btn" onclick="closeEditBirthdayModal()" style="flex:1;background:var(--bg-secondary);color:var(--text-primary);">Cancel</button>
+                </div>
             </div>
         </div>
     </div>
@@ -807,7 +846,7 @@
             const sorted = familyMembers
                 .map(member => ({ name: member, score: memberScores[member] || 0 }))
                 .sort((a, b) => b.score - a.score);
-            
+
             leaderboard.innerHTML = '';
             sorted.forEach((member, index) => {
                 const emoji = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index + 1}.`;
@@ -820,6 +859,8 @@
                 `;
                 leaderboard.appendChild(div);
             });
+
+            renderAchievements();
         }
         
         // To-Do Functions
@@ -853,15 +894,16 @@
         
         async function completeTask(index, assignee) {
             await apiCall('completeTask', { index, completedDate: new Date().toISOString(), completedBy: assignee });
-            
-            const points = 10 + Math.floor(Math.random() * 5) + 1;
+
+            const points = 1;
             updateScore(points, assignee);
-            
-            // Save points to Google Sheets
+
+            // Save updated total to Google Sheets
             if (assignee && familyMembers.includes(assignee)) {
                 await apiCall('updatePoints', { member: assignee, points: memberScores[assignee] });
             }
-            
+
+            renderAchievements();
             loadTasks();
         }
         
@@ -1011,9 +1053,20 @@
         }
         
         async function loadTodayEvents() {
-            const events = await apiCall('getEvents');
+            let events = await apiCall('getEvents');
             const birthdays = await apiCall('getBirthdays');
-            
+
+            // Dedup events
+            if (events) {
+                const seenKeys = new Set();
+                events = events.filter(e => {
+                    const key = `${(e.title||'').toLowerCase()}-${e.date}-${e.time||''}`;
+                    if (seenKeys.has(key)) return false;
+                    seenKeys.add(key);
+                    return true;
+                });
+            }
+
             const today = new Date().toISOString().split('T')[0];
             const todayMonth = new Date().getMonth();
             const todayDay = new Date().getDate();
@@ -1071,8 +1124,15 @@
         async function loadCalendar() {
             const events = await apiCall('getEvents');
             if (!events) return;
-            
-            calendarEvents = events; // Keep ALL events for calendar grid
+
+            // Frontend dedup in case server-side misses anything
+            const seenKeys = new Set();
+            calendarEvents = events.filter(e => {
+                const key = `${(e.title||'').toLowerCase()}-${e.date}-${e.time||''}`;
+                if (seenKeys.has(key)) return false;
+                seenKeys.add(key);
+                return true;
+            }); // Keep ALL deduped events for calendar grid
             
             // Filter out past events for the list view
             const today = new Date();
@@ -1292,14 +1352,18 @@
                 content += `<div class="modal-section">
                     <div class="modal-section-title">📅 Events</div>`;
                 dayEvents.forEach(event => {
-                    const sourceBadge = event.source === 'calendar' 
+                    const sourceBadge = event.source === 'calendar'
                         ? '<span style="background: #34A853; color: white; padding: 3px 8px; border-radius: 6px; font-size: 0.75rem; margin-left: 8px;">📅 Google Calendar</span>'
+                        : '';
+                    const deleteBtn = event.source !== 'calendar' && event.index !== undefined
+                        ? `<button onclick="deleteEvent(${event.index});closeDayModal();" style="margin-top:0.5rem;background:var(--danger);color:white;border:none;padding:0.3rem 0.75rem;border-radius:8px;font-weight:600;font-size:0.8rem;cursor:pointer;">🗑️ Delete</button>`
                         : '';
                     content += `
                         <div class="modal-event-item">
                             <div class="modal-event-title">${event.title}${sourceBadge}</div>
                             ${event.time ? `<div class="modal-event-time">⏰ ${event.time}</div>` : '<div class="modal-event-time">All day</div>'}
                             ${event.description ? `<div class="modal-event-desc">${event.description}</div>` : ''}
+                            ${deleteBtn}
                         </div>
                     `;
                 });
@@ -1459,11 +1523,16 @@
                 const age = calculateAge(birthday.date);
                 const div = document.createElement('div');
                 div.className = 'birthday-card';
+                const safeDate = birthday.date ? birthday.date.split('T')[0] : '';
                 div.innerHTML = `
                     <div class="birthday-countdown">${days === 0 ? '🎉 TODAY! 🎉' : days === 1 ? '1 DAY' : `${days} DAYS`}</div>
                     <div class="birthday-name">${birthday.name}</div>
                     <div class="birthday-date">${new Date(birthday.date).toLocaleDateString('en-US', { month: 'long', day: 'numeric' })}</div>
                     <div style="font-size: 1.1rem; margin-top: 0.5rem; opacity: 0.95; position: relative; z-index: 1;">Turning ${age}</div>
+                    <div style="display:flex;gap:0.5rem;margin-top:1rem;position:relative;z-index:1;justify-content:center;">
+                        <button onclick="openEditBirthday(${birthday.index}, '${birthday.name.replace(/'/g,"\\'")}', '${safeDate}')" style="background:white;color:var(--accent);border:2px solid white;padding:0.3rem 0.75rem;border-radius:8px;font-weight:600;font-size:0.8rem;cursor:pointer;">✏️ Edit</button>
+                        <button onclick="deleteBirthday(${birthday.index})" style="background:rgba(239,68,68,0.85);color:white;border:none;padding:0.3rem 0.75rem;border-radius:8px;font-weight:600;font-size:0.8rem;cursor:pointer;">🗑️</button>
+                    </div>
                 `;
                 container.appendChild(div);
             });
@@ -1500,6 +1569,220 @@
             }
         }
         
+        // ==================== ACHIEVEMENTS ====================
+
+        function renderAchievements() {
+            const MILESTONES = [
+                { pts: 100, icon: '🏅', label: 'Centurion' },
+                { pts: 200, icon: '⭐', label: 'Double Century' },
+                { pts: 300, icon: '🌟', label: 'Triple Threat' },
+                { pts: 400, icon: '💎', label: 'Diamond Level' },
+                { pts: 500, icon: '🔥', label: 'On Fire!' },
+                { pts: 750, icon: '⚡', label: 'Lightning Bolt' },
+                { pts: 1000, icon: '👑', label: 'Family Legend' },
+            ];
+
+            const container = document.getElementById('achievementsList');
+            if (!container) return;
+
+            const achievements = [];
+            familyMembers.forEach(member => {
+                const pts = memberScores[member] || 0;
+                MILESTONES.forEach(m => {
+                    if (pts >= m.pts) achievements.push({ member, ...m });
+                });
+            });
+
+            if (achievements.length === 0) {
+                container.innerHTML = '<div class="loading">No achievements yet — complete tasks to earn points!</div>';
+                return;
+            }
+
+            achievements.sort((a, b) => b.pts - a.pts);
+            container.innerHTML = achievements.map(a => `
+                <div class="achievement-item">
+                    <div class="achievement-icon">${a.icon}</div>
+                    <div>
+                        <div class="achievement-member">${a.member}</div>
+                        <div class="achievement-label">${a.label} — ${a.pts}+ points reached</div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // ==================== EDIT / DELETE BIRTHDAY ====================
+
+        function openEditBirthday(index, name, dateStr) {
+            document.getElementById('editBirthdayIndex').value = index;
+            document.getElementById('editBirthdayName').value = name;
+            // Convert YYYY-MM-DD to DD/MM/YYYY for display
+            if (dateStr && dateStr.includes('-')) {
+                const [y, m, d] = dateStr.split('-');
+                document.getElementById('editBirthdayDateInput').value = `${d}/${m}/${y}`;
+            } else {
+                document.getElementById('editBirthdayDateInput').value = dateStr;
+            }
+            document.getElementById('editBirthdayModal').classList.add('active');
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closeEditBirthdayModal() {
+            document.getElementById('editBirthdayModal').classList.remove('active');
+            document.body.style.overflow = 'auto';
+        }
+
+        async function saveBirthdayEdit() {
+            const index = parseInt(document.getElementById('editBirthdayIndex').value);
+            const name = document.getElementById('editBirthdayName').value.trim();
+            const dateInput = document.getElementById('editBirthdayDateInput').value.trim();
+
+            if (!name || !dateInput) return alert('Please enter name and date!');
+
+            let date;
+            if (dateInput.includes('/')) {
+                const parts = dateInput.split('/');
+                if (parts.length === 3) {
+                    date = `${parts[2]}-${parts[1].padStart(2,'0')}-${parts[0].padStart(2,'0')}`;
+                } else return alert('Please use DD/MM/YYYY format');
+            } else {
+                date = dateInput;
+            }
+
+            if (isNaN(new Date(date).getTime())) return alert('Invalid date! Use DD/MM/YYYY');
+
+            await apiCall('editBirthday', { index, name, date });
+            closeEditBirthdayModal();
+            loadBirthdays();
+            loadTodayEvents();
+            checkBirthdayAlerts();
+        }
+
+        async function deleteBirthday(index) {
+            if (!confirm('Delete this birthday?')) return;
+            await apiCall('deleteBirthday', { index });
+            loadBirthdays();
+            loadTodayEvents();
+            checkBirthdayAlerts();
+        }
+
+        // ==================== PUSH NOTIFICATIONS ====================
+
+        async function requestNotificationPermission() {
+            if (!('Notification' in window)) return false;
+            if (Notification.permission === 'granted') return true;
+            if (Notification.permission === 'denied') return false;
+            const perm = await Notification.requestPermission();
+            return perm === 'granted';
+        }
+
+        function sendNotification(title, body, tag) {
+            if (Notification.permission !== 'granted') return;
+            const n = new Notification(title, {
+                body,
+                tag: tag || title,
+                icon: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">👨‍👩‍👧‍👦</text></svg>'
+            });
+            setTimeout(() => n.close(), 12000);
+        }
+
+        async function checkAndNotify() {
+            if (Notification.permission !== 'granted') return;
+
+            const todayStr = new Date().toISOString().split('T')[0];
+            const storageKey = `notified-${todayStr}`;
+            if (localStorage.getItem(storageKey)) return; // Already notified today
+
+            const today = new Date();
+            const todayMonth = today.getMonth();
+            const todayDay = today.getDate();
+
+            const [events, birthdays, tasks] = await Promise.all([
+                apiCall('getEvents'),
+                apiCall('getBirthdays'),
+                apiCall('getTasks')
+            ]);
+
+            const notifications = [];
+
+            // Today's birthdays
+            if (birthdays) {
+                birthdays.forEach(b => {
+                    const bd = new Date(b.date);
+                    if (bd.getMonth() === todayMonth && bd.getDate() === todayDay) {
+                        notifications.push({ title: `🎂 Happy Birthday ${b.name}!`, body: `It's ${b.name}'s birthday today!`, tag: `bday-${b.name}` });
+                    }
+                });
+                // Tomorrow's birthdays
+                const tomorrow = new Date(today);
+                tomorrow.setDate(tomorrow.getDate() + 1);
+                birthdays.forEach(b => {
+                    const bd = new Date(b.date);
+                    if (bd.getMonth() === tomorrow.getMonth() && bd.getDate() === tomorrow.getDate()) {
+                        notifications.push({ title: `🎂 Birthday Tomorrow!`, body: `${b.name}'s birthday is tomorrow — don't forget!`, tag: `bday-tmrw-${b.name}` });
+                    }
+                });
+            }
+
+            // Today's events
+            if (events) {
+                events.filter(e => e.date && e.date.startsWith(todayStr)).forEach(e => {
+                    notifications.push({ title: `📅 Today: ${e.title}`, body: e.time ? `Starts at ${e.time}` : 'All day', tag: `evt-${e.title}-${todayStr}` });
+                });
+            }
+
+            // Pending high-priority tasks
+            if (tasks) {
+                const high = tasks.filter(t => !t.completed && t.priority === 'high');
+                if (high.length > 0) {
+                    notifications.push({
+                        title: `📝 ${high.length} High Priority Task${high.length > 1 ? 's' : ''} Pending`,
+                        body: high.slice(0, 3).map(t => `• ${t.task}${t.assignee ? ` (${t.assignee})` : ''}`).join('\n'),
+                        tag: `tasks-high-${todayStr}`
+                    });
+                }
+            }
+
+            // Pending shopping items
+            const shopping = await apiCall('getShopping');
+            if (shopping) {
+                const pending = shopping.filter(s => !s.completed);
+                if (pending.length > 0) {
+                    notifications.push({
+                        title: `🛒 ${pending.length} Item${pending.length > 1 ? 's' : ''} on Shopping List`,
+                        body: pending.slice(0, 3).map(s => `• ${s.item}`).join('\n'),
+                        tag: `shopping-${todayStr}`
+                    });
+                }
+            }
+
+            notifications.forEach((n, i) => {
+                setTimeout(() => sendNotification(n.title, n.body, n.tag), i * 2500);
+            });
+
+            if (notifications.length > 0) localStorage.setItem(storageKey, '1');
+        }
+
+        async function enableNotifications() {
+            const granted = await requestNotificationPermission();
+            const btn = document.getElementById('notifBtn');
+            if (granted) {
+                if (btn) btn.textContent = '🔔 Reminders On';
+                localStorage.setItem('notificationsEnabled', '1');
+                await checkAndNotify();
+            } else {
+                alert('Notifications blocked. Please enable them in browser settings and try again.');
+            }
+        }
+
+        // Auto-enable if previously granted
+        if (localStorage.getItem('notificationsEnabled') && Notification.permission === 'granted') {
+            document.addEventListener('DOMContentLoaded', () => {
+                const btn = document.getElementById('notifBtn');
+                if (btn) btn.textContent = '🔔 Reminders On';
+            });
+            setTimeout(checkAndNotify, 3000); // Wait for data to load
+        }
+
         async function checkBirthdayAlerts() {
             const birthdays = await apiCall('getBirthdays');
             if (!birthdays) return;
