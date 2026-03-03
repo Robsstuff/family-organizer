@@ -3,7 +3,7 @@
  * With: Points tracking, Recurring tasks, Task cleanup
  */
 
-const CALENDAR_ID = 'your.email@gmail.com'; // UPDATE THIS
+const CALENDAR_ID = 'robbukey@gmail.com';
 
 const SHEET_NAMES = {
   TODO: 'TodoList',
@@ -159,12 +159,16 @@ function addTask(data) {
 function completeTask(data) {
   const sheet = getSheet(SHEET_NAMES.TODO);
   const rowIndex = data.index + 2;
-  
+
   sheet.getRange(rowIndex, 5).setValue(true);
   sheet.getRange(rowIndex, 6).setValue(new Date());
   sheet.getRange(rowIndex, 8).setValue(data.completedBy || '');
   sheet.getRange(rowIndex, 1, 1, 9).setFontColor('#94A3B8').setFontLine('line-through');
-  
+
+  // Award 1 point — default to Rob if no assignee
+  const member = (data.completedBy && data.completedBy.trim()) ? data.completedBy : 'Rob';
+  incrementPoints(member, 1);
+
   return { success: true };
 }
 
@@ -233,6 +237,27 @@ function getPoints() {
     }
   }
   return points;
+}
+
+function incrementPoints(member, amount) {
+  const sheet = getSheet(SHEET_NAMES.POINTS);
+  const dataRange = sheet.getDataRange().getValues();
+  let rowIndex = -1;
+
+  for (let i = 1; i < dataRange.length; i++) {
+    if (dataRange[i][0] === member) {
+      rowIndex = i + 1;
+      break;
+    }
+  }
+
+  if (rowIndex === -1) {
+    sheet.appendRow([member, amount, new Date()]);
+  } else {
+    const current = Number(dataRange[rowIndex - 1][1]) || 0;
+    sheet.getRange(rowIndex, 2).setValue(current + amount);
+    sheet.getRange(rowIndex, 3).setValue(new Date());
+  }
 }
 
 function updatePoints(data) {
@@ -315,47 +340,40 @@ function deleteShoppingItem(data) {
 function getEvents() {
   const sheet = getSheet(SHEET_NAMES.CALENDAR);
   const data = sheet.getDataRange().getValues();
-  
-  const events = [];
-  
+
+  // Collect sheet events
+  const sheetEvents = [];
   if (data.length > 1) {
     for (let i = 1; i < data.length; i++) {
       const row = data[i];
       if (!row[0]) continue;
-      
-      events.push({
-        title: row[0],
+      sheetEvents.push({
+        title: String(row[0] || ''),
         date: row[1] ? new Date(row[1]).toISOString().split('T')[0] : null,
-        time: row[2] || '',
-        description: row[3] || '',
+        time: row[2] ? String(row[2]) : '',
+        description: row[3] ? String(row[3]) : '',
         addedDate: row[4] ? new Date(row[4]).toISOString() : null,
         index: i - 1,
         source: 'sheet'
       });
     }
   }
-  
+
+  // Collect Google Calendar events
+  const calEvents = [];
   try {
     const calendar = CalendarApp.getCalendarById(CALENDAR_ID);
     if (calendar) {
       const today = new Date();
       const threeMonthsFromNow = new Date();
       threeMonthsFromNow.setMonth(today.getMonth() + 3);
-      
-      const calendarEvents = calendar.getEvents(today, threeMonthsFromNow);
-      
-      calendarEvents.forEach(event => {
+      calendar.getEvents(today, threeMonthsFromNow).forEach(event => {
         const startTime = event.getStartTime();
         const isAllDay = event.isAllDayEvent();
-        
-        // Format date in Australian timezone (AEST/AEDT)
-        const dateInAustralia = Utilities.formatDate(startTime, 'Australia/Sydney', 'yyyy-MM-dd');
-        const timeInAustralia = isAllDay ? '' : Utilities.formatDate(startTime, 'Australia/Sydney', 'HH:mm');
-        
-        events.push({
-          title: event.getTitle(),
-          date: dateInAustralia,
-          time: timeInAustralia,
+        calEvents.push({
+          title: String(event.getTitle() || ''),
+          date: Utilities.formatDate(startTime, 'Australia/Sydney', 'yyyy-MM-dd'),
+          time: isAllDay ? '' : Utilities.formatDate(startTime, 'Australia/Sydney', 'HH:mm'),
           description: event.getDescription() || '',
           source: 'calendar'
         });
@@ -364,19 +382,31 @@ function getEvents() {
   } catch (e) {
     Logger.log('Error fetching calendar: ' + e.toString());
   }
-  
-  const uniqueEvents = [];
-  const seen = new Set();
-  
-  events.forEach(event => {
-    const key = `${(event.title||'').toLowerCase().trim()}-${event.date}-${event.time||''}`;
+
+  // Merge: dedup by title+date. Calendar events take priority over sheet events.
+  const result = [];
+  const seen = new Map(); // key → index in result
+
+  sheetEvents.forEach(event => {
+    const key = `${event.title.toLowerCase().trim()}-${event.date}`;
     if (!seen.has(key)) {
-      seen.add(key);
-      uniqueEvents.push(event);
+      seen.set(key, result.length);
+      result.push(event);
     }
   });
-  
-  return uniqueEvents;
+
+  calEvents.forEach(event => {
+    const key = `${event.title.toLowerCase().trim()}-${event.date}`;
+    if (seen.has(key)) {
+      // Replace sheet event with the Google Calendar version
+      result[seen.get(key)] = event;
+    } else {
+      seen.set(key, result.length);
+      result.push(event);
+    }
+  });
+
+  return result;
 }
 
 function addEvent(data) {
@@ -493,7 +523,26 @@ function testSetup() {
     getSheet(name);
     Logger.log('✓ ' + name);
   });
-  Logger.log('✓ All sheets ready! Update CALENDAR_ID on line 6');
+  Logger.log('✓ All sheets ready!');
+}
+
+function testCalendar() {
+  try {
+    const calendar = CalendarApp.getCalendarById(CALENDAR_ID);
+    if (!calendar) {
+      Logger.log('❌ Calendar not found for ID: ' + CALENDAR_ID);
+      return;
+    }
+    Logger.log('✓ Calendar connected: ' + calendar.getName());
+    const today = new Date();
+    const threeMonthsFromNow = new Date();
+    threeMonthsFromNow.setMonth(today.getMonth() + 3);
+    const events = calendar.getEvents(today, threeMonthsFromNow);
+    Logger.log('✓ Events found: ' + events.length);
+    events.forEach(e => Logger.log('  - ' + e.getTitle() + ' on ' + e.getStartTime()));
+  } catch (e) {
+    Logger.log('❌ Error: ' + e.toString());
+  }
 }
 
 // ==================== DAILY EMAIL ====================
