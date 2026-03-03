@@ -495,3 +495,176 @@ function testSetup() {
   });
   Logger.log('✓ All sheets ready! Update CALENDAR_ID on line 6');
 }
+
+// ==================== DAILY EMAIL ====================
+
+const EMAIL_RECIPIENT = 'robbukey@gmail.com';
+
+function sendDailyEmail() {
+  const today = new Date();
+  const todayStr = Utilities.formatDate(today, 'Australia/Sydney', 'yyyy-MM-dd');
+  const displayDate = Utilities.formatDate(today, 'Australia/Sydney', 'EEEE, MMMM d, yyyy');
+
+  // Gather all data
+  const tasks     = getTasks();
+  const shopping  = getShopping();
+  const events    = getEvents();
+  const birthdays = getBirthdays();
+  const points    = getPoints();
+
+  // --- Todays events ---
+  const todayEvents = events.filter(e => e.date === todayStr);
+
+  // --- Upcoming events (next 7 days, excluding today) ---
+  const upcoming = events.filter(e => {
+    if (!e.date || e.date === todayStr) return false;
+    const diff = (new Date(e.date) - today) / (1000 * 60 * 60 * 24);
+    return diff > 0 && diff <= 7;
+  }).sort((a, b) => new Date(a.date) - new Date(b.date));
+
+  // --- Pending tasks ---
+  const pendingTasks = tasks.filter(t => !t.completed);
+  const highTasks    = pendingTasks.filter(t => t.priority === 'high');
+  const medTasks     = pendingTasks.filter(t => t.priority === 'medium');
+  const lowTasks     = pendingTasks.filter(t => t.priority === 'low');
+
+  // --- Shopping list (pending items only) ---
+  const pendingShopping = shopping.filter(s => !s.completed);
+
+  // --- Upcoming birthdays (within 14 days) ---
+  function daysUntilBirthday(dateStr) {
+    const bd = new Date(dateStr);
+    const next = new Date(today.getFullYear(), bd.getMonth(), bd.getDate());
+    if (next < today) next.setFullYear(today.getFullYear() + 1);
+    return Math.ceil((next - today) / (1000 * 60 * 60 * 24));
+  }
+  const upcomingBirthdays = birthdays
+    .map(b => ({ ...b, daysUntil: daysUntilBirthday(b.date) }))
+    .filter(b => b.daysUntil <= 14)
+    .sort((a, b) => a.daysUntil - b.daysUntil);
+
+  // --- Points leaderboard ---
+  const leaderboard = Object.entries(points)
+    .sort((a, b) => b[1] - a[1])
+    .map(([name, pts], i) => {
+      const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i+1}.`;
+      return `<tr><td style="padding:8px 12px;font-size:15px;">${medal}</td><td style="padding:8px 12px;font-weight:600;">${name}</td><td style="padding:8px 12px;color:#1A5F7A;font-weight:700;">${pts} pts</td></tr>`;
+    }).join('');
+
+  // ---- Helper: section builder ----
+  function section(emoji, title, color, rows) {
+    if (!rows || rows.length === 0) return '';
+    return `
+      <div style="margin-bottom:28px;">
+        <h2 style="margin:0 0 12px 0;font-size:17px;color:${color};border-bottom:2px solid ${color};padding-bottom:6px;">${emoji} ${title}</h2>
+        ${rows}
+      </div>`;
+  }
+
+  function taskRow(t) {
+    const priorityColor = t.priority === 'high' ? '#EF4444' : t.priority === 'low' ? '#3B82F6' : '#F59E0B';
+    const assignee = t.assignee ? `<span style="background:#1A5F7A;color:white;padding:1px 7px;border-radius:10px;font-size:12px;margin-left:6px;">${t.assignee}</span>` : '';
+    const pri = `<span style="color:${priorityColor};font-size:12px;font-weight:700;margin-left:6px;">[${t.priority.toUpperCase()}]</span>`;
+    return `<div style="padding:8px 0;border-bottom:1px solid #F1F5F9;">◦ ${t.task}${assignee}${pri}</div>`;
+  }
+
+  function eventRow(e) {
+    const time = e.time ? `<span style="color:#64748B;font-size:13px;"> at ${e.time}</span>` : '';
+    const source = e.source === 'calendar' ? `<span style="background:#34A853;color:white;padding:1px 6px;border-radius:8px;font-size:11px;margin-left:6px;">Google Cal</span>` : '';
+    return `<div style="padding:8px 0;border-bottom:1px solid #F1F5F9;">📌 <strong>${e.title}</strong>${time}${source}</div>`;
+  }
+
+  // ---- Build HTML ----
+  const todayEventsHtml   = todayEvents.length   ? todayEvents.map(eventRow).join('')   : '<div style="color:#94A3B8;font-style:italic;padding:8px 0;">Nothing scheduled today</div>';
+  const upcomingHtml      = upcoming.map(e => {
+    const daysLabel = Math.ceil((new Date(e.date) - today) / (1000 * 60 * 60 * 24));
+    const time = e.time ? ` at ${e.time}` : '';
+    return `<div style="padding:8px 0;border-bottom:1px solid #F1F5F9;">📌 <strong>${e.title}</strong><span style="color:#64748B;font-size:13px;"> — ${Utilities.formatDate(new Date(e.date), 'Australia/Sydney', 'EEE d MMM')}${time}</span> <span style="color:#FF8B3D;font-size:12px;font-weight:700;">in ${daysLabel}d</span></div>`;
+  }).join('');
+
+  const allTasksHtml = [
+    ...highTasks.map(taskRow),
+    ...medTasks.map(taskRow),
+    ...lowTasks.map(taskRow)
+  ].join('') || '<div style="color:#94A3B8;font-style:italic;padding:8px 0;">All caught up! 🎉</div>';
+
+  const shoppingHtml = pendingShopping.length
+    ? pendingShopping.map(s => `<div style="padding:6px 0;border-bottom:1px solid #F1F5F9;">🛒 ${s.item}</div>`).join('')
+    : '<div style="color:#94A3B8;font-style:italic;padding:8px 0;">Shopping list is clear!</div>';
+
+  const birthdayHtml = upcomingBirthdays.length
+    ? upcomingBirthdays.map(b => {
+        const label = b.daysUntil === 0 ? '🎉 TODAY!' : b.daysUntil === 1 ? 'Tomorrow' : `in ${b.daysUntil} days`;
+        return `<div style="padding:8px 0;border-bottom:1px solid #F1F5F9;">🎂 <strong>${b.name}</strong> <span style="color:#FF8B3D;font-weight:700;">${label}</span></div>`;
+      }).join('')
+    : '';
+
+  const html = `
+  <!DOCTYPE html>
+  <html>
+  <body style="margin:0;padding:0;background:#F8FAFC;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+    <div style="max-width:600px;margin:0 auto;padding:20px;">
+
+      <!-- Header -->
+      <div style="background:linear-gradient(135deg,#1A5F7A,#114356);border-radius:16px;padding:28px 32px;margin-bottom:24px;">
+        <div style="font-size:28px;margin-bottom:4px;">👨‍👩‍👧‍👦 Family Organizer</div>
+        <div style="color:rgba(255,255,255,0.85);font-size:15px;">Daily Summary — ${displayDate}</div>
+      </div>
+
+      <!-- Body card -->
+      <div style="background:white;border-radius:16px;padding:28px 32px;box-shadow:0 4px 6px rgba(15,23,42,0.08);">
+
+        ${section('📅', "Today's Events", '#1A5F7A', todayEventsHtml)}
+        ${upcomingBirthdays.length ? section('🎂', 'Upcoming Birthdays', '#FF8B3D', birthdayHtml) : ''}
+        ${upcoming.length ? section('🗓️', 'Coming Up This Week', '#8B5CF6', upcomingHtml) : ''}
+        ${section('📝', `To-Do List (${pendingTasks.length} pending)`, '#EF4444', allTasksHtml)}
+        ${pendingShopping.length ? section('🛒', `Shopping List (${pendingShopping.length} items)`, '#22C55E', shoppingHtml) : ''}
+
+        <!-- Leaderboard -->
+        <div style="margin-bottom:8px;">
+          <h2 style="margin:0 0 12px 0;font-size:17px;color:#F59E0B;border-bottom:2px solid #F59E0B;padding-bottom:6px;">🏆 Points Leaderboard</h2>
+          <table style="width:100%;border-collapse:collapse;">${leaderboard}</table>
+        </div>
+
+      </div>
+
+      <!-- Footer -->
+      <div style="text-align:center;padding:16px;color:#94A3B8;font-size:13px;">
+        Sent automatically by Family Organizer · Warners Bay, NSW
+      </div>
+    </div>
+  </body>
+  </html>`;
+
+  const subject = `👨‍👩‍👧‍👦 Family Summary — ${displayDate}${todayEvents.length ? ` · ${todayEvents.length} event${todayEvents.length > 1 ? 's' : ''} today` : ''}${upcomingBirthdays.filter(b => b.daysUntil === 0).length ? ' 🎂' : ''}`;
+
+  MailApp.sendEmail({
+    to: EMAIL_RECIPIENT,
+    subject: subject,
+    htmlBody: html
+  });
+
+  Logger.log('Daily email sent to ' + EMAIL_RECIPIENT);
+}
+
+// Run this ONCE to set up the daily 7am trigger (Sydney time)
+function createDailyEmailTrigger() {
+  // Remove any existing daily email triggers first
+  ScriptApp.getProjectTriggers().forEach(trigger => {
+    if (trigger.getHandlerFunction() === 'sendDailyEmail') {
+      ScriptApp.deleteTrigger(trigger);
+    }
+  });
+
+  // Create new trigger at 7:00am Sydney time (UTC+10/11)
+  // GAS doesn't support timezone-aware time triggers directly,
+  // so we use hour 20-21 UTC which is 7am AEST (UTC+10)
+  ScriptApp.newTrigger('sendDailyEmail')
+    .timeBased()
+    .atHour(20)   // 8pm UTC = 6am AEST / 7am AEDT
+    .nearMinute(0)
+    .everyDays(1)
+    .create();
+
+  Logger.log('✓ Daily email trigger created — will run at ~7am Sydney time');
+}
