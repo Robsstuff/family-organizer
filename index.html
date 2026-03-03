@@ -1641,10 +1641,9 @@
             });
         }
         
-        // Initialize — single batched API call replaces 9 separate calls
-        async function refreshAllData() {
-            const data = await apiCall('getData');
-            if (!data) return;
+        const CACHE_KEY = 'familyOrganizerData';
+
+        function renderData(data) {
             loadPoints(data.points);
             loadTasks(data.tasks);
             loadShopping(data.shopping);
@@ -1656,6 +1655,18 @@
             renderWeekCalendar(data.events, data.birthdays);
             updateLeaderboard();
         }
+
+        // Initialize — show cached data instantly, then fetch fresh in background
+        async function refreshAllData() {
+            const fresh = await apiCall('getData');
+            if (!fresh) return;
+            localStorage.setItem(CACHE_KEY, JSON.stringify(fresh));
+            renderData(fresh);
+        }
+
+        // Render cached data immediately so app feels instant
+        const cachedData = localStorage.getItem(CACHE_KEY);
+        if (cachedData) renderData(JSON.parse(cachedData));
 
         fetchWeather();
         refreshAllData();

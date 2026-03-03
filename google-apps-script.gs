@@ -66,31 +66,38 @@ function doGet(e) {
       case 'getBirthdays': result = getBirthdays(); break;
       case 'getPoints': result = getPoints(); break;
       case 'getData':
-        result = {
-          tasks: getTasks(),
-          shopping: getShopping(),
-          events: getEvents(),
-          spencerRoutine: getRoutine('spencer'),
-          graingerRoutine: getRoutine('grainger'),
-          birthdays: getBirthdays(),
-          points: getPoints()
-        };
+        var cache = CacheService.getScriptCache();
+        var cached = cache.get('allData');
+        if (cached) {
+          result = JSON.parse(cached);
+        } else {
+          result = {
+            tasks: getTasks(),
+            shopping: getShopping(),
+            events: getEvents(),
+            spencerRoutine: getRoutine('spencer'),
+            graingerRoutine: getRoutine('grainger'),
+            birthdays: getBirthdays(),
+            points: getPoints()
+          };
+          cache.put('allData', JSON.stringify(result), 300); // cache 5 mins
+        }
         break;
-      
-      case 'addTask': result = addTask(data); break;
-      case 'completeTask': result = completeTask(data); break;
-      case 'addShoppingItem': result = addShoppingItem(data); break;
-      case 'toggleShoppingItem': result = toggleShoppingItem(data); break;
-      case 'deleteShoppingItem': result = deleteShoppingItem(data); break;
-      case 'addEvent': result = addEvent(data); break;
-      case 'deleteEvent': result = deleteEvent(data); break;
-      case 'addRoutineTask': result = addRoutineTask(data); break;
-      case 'toggleRoutineTask': result = toggleRoutineTask(data); break;
-      case 'addBirthday': result = addBirthday(data); break;
-      case 'editBirthday': result = editBirthday(data); break;
-      case 'deleteBirthday': result = deleteBirthday(data); break;
-      case 'updatePoints': result = updatePoints(data); break;
-      case 'resetRecurringTasks': result = resetRecurringTasks(); break;
+
+      case 'addTask': result = addTask(data); invalidateCache(); break;
+      case 'completeTask': result = completeTask(data); invalidateCache(); break;
+      case 'addShoppingItem': result = addShoppingItem(data); invalidateCache(); break;
+      case 'toggleShoppingItem': result = toggleShoppingItem(data); invalidateCache(); break;
+      case 'deleteShoppingItem': result = deleteShoppingItem(data); invalidateCache(); break;
+      case 'addEvent': result = addEvent(data); invalidateCache(); break;
+      case 'deleteEvent': result = deleteEvent(data); invalidateCache(); break;
+      case 'addRoutineTask': result = addRoutineTask(data); invalidateCache(); break;
+      case 'toggleRoutineTask': result = toggleRoutineTask(data); invalidateCache(); break;
+      case 'addBirthday': result = addBirthday(data); invalidateCache(); break;
+      case 'editBirthday': result = editBirthday(data); invalidateCache(); break;
+      case 'deleteBirthday': result = deleteBirthday(data); invalidateCache(); break;
+      case 'updatePoints': result = updatePoints(data); invalidateCache(); break;
+      case 'resetRecurringTasks': result = resetRecurringTasks(); invalidateCache(); break;
       
       default: result = { error: 'Unknown action' };
     }
@@ -99,6 +106,10 @@ function doGet(e) {
   } catch (error) {
     return ContentService.createTextOutput(JSON.stringify({ error: error.toString() })).setMimeType(ContentService.MimeType.JSON);
   }
+}
+
+function invalidateCache() {
+  CacheService.getScriptCache().remove('allData');
 }
 
 // ==================== TASKS ====================
