@@ -392,6 +392,38 @@
         .loading { text-align: center; padding: 2rem; color: var(--text-tertiary); }
         
         /* Day Details Modal */
+        /* Toast notifications */
+        #toast-container {
+            position: fixed;
+            bottom: 1.5rem;
+            right: 1.5rem;
+            z-index: 9999;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            pointer-events: none;
+        }
+        .toast {
+            background: #1A5F7A;
+            color: white;
+            padding: 0.75rem 1.2rem;
+            border-radius: 12px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+            opacity: 0;
+            transform: translateY(12px);
+            transition: opacity 0.25s ease, transform 0.25s ease;
+            max-width: 300px;
+        }
+        .toast.show {
+            opacity: 1;
+            transform: translateY(0);
+        }
+        .toast.success { background: #16a34a; }
+        .toast.error   { background: #dc2626; }
+        .toast.info    { background: #1A5F7A; }
+
         .modal-overlay {
             display: none;
             position: fixed;
@@ -767,6 +799,8 @@
     </div>
 
     <!-- Day Details Modal -->
+    <div id="toast-container"></div>
+
     <div class="modal-overlay" id="dayModal" onclick="closeModal(event)">
         <div class="modal-content" onclick="event.stopPropagation()">
             <button class="modal-close" onclick="closeDayModal()">×</button>
@@ -788,13 +822,11 @@
         
         familyMembers.forEach(member => memberScores[member] = 0);
         
-        const CORS_PROXY = 'https://corsproxy.io/?';
-
         async function apiCall(action, data = null) {
             try {
                 let url = `${API_URL}?action=${action}`;
                 if (data) url += `&data=${encodeURIComponent(JSON.stringify(data))}`;
-                const response = await fetch(CORS_PROXY + encodeURIComponent(url));
+                const response = await fetch(url, { redirect: 'follow' });
                 const result = await response.json();
                 if (result.error) {
                     console.error('API Error:', result.error);
@@ -805,6 +837,22 @@
                 console.error('API call failed:', action, error);
                 return null;
             }
+        }
+
+        function showToast(message, type = 'success') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.textContent = message;
+            container.appendChild(toast);
+            // Trigger transition
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => toast.classList.add('show'));
+            });
+            setTimeout(() => {
+                toast.classList.remove('show');
+                setTimeout(() => toast.remove(), 300);
+            }, 3500);
         }
         
         function getWeatherEmoji(condition) {
@@ -917,13 +965,16 @@
             const priority = document.getElementById('taskPriority').value;
             const task = input.value.trim();
             if (!task) return alert('Please enter a task!');
-            await apiCall('addTask', { task, assignee, priority, addedDate: new Date().toISOString() });
+            const added = new Date().toISOString();
+            await apiCall('addTask', { task, assignee, priority, addedDate: added });
             input.value = '';
             document.getElementById('taskAssignee').value = '';
             document.getElementById('taskPriority').value = 'medium';
+            const dateLabel = new Date().toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
+            showToast(`Task added on ${dateLabel}`, 'success');
             loadTasks();
         }
-        
+
         async function addTaskFromDashboard() {
             const input = document.getElementById('newTaskDash');
             const assignee = document.getElementById('taskAssigneeDash').value;
@@ -936,15 +987,18 @@
             document.getElementById('taskAssigneeDash').value = '';
             document.getElementById('taskPriorityDash').value = 'medium';
             document.getElementById('taskFrequencyDash').value = 'none';
+            const dateLabel = new Date().toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
+            showToast(`Task added on ${dateLabel}`, 'success');
             loadTasks();
         }
-        
+
         async function completeTask(index, assignee) {
             await apiCall('completeTask', { index, completedDate: new Date().toISOString(), completedBy: assignee });
 
             // Show +1 popup for whoever gets the point (Rob if unassigned)
             const recipient = (assignee && familyMembers.includes(assignee)) ? assignee : 'Rob';
             updateScore(1, recipient);
+            showToast(`Task complete! +1 point to ${recipient}`, 'success');
 
             renderAchievements();
             loadTasks();
@@ -1010,25 +1064,30 @@
             if (!item) return alert('Please enter an item!');
             await apiCall('addShoppingItem', { item });
             input.value = '';
+            const dateLabel = new Date().toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
+            showToast(`"${item}" added on ${dateLabel}`, 'success');
             loadShopping();
         }
-        
+
         async function addShoppingItemFromDashboard() {
             const input = document.getElementById('newShoppingItemDash');
             const item = input.value.trim();
             if (!item) return alert('Please enter an item!');
             await apiCall('addShoppingItem', { item });
             input.value = '';
+            const dateLabel = new Date().toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
+            showToast(`"${item}" added on ${dateLabel}`, 'success');
             loadShopping();
         }
-        
+
         async function toggleShoppingItem(index) {
             await apiCall('toggleShoppingItem', { index });
             loadShopping();
         }
-        
+
         async function deleteShoppingItem(index) {
             await apiCall('deleteShoppingItem', { index });
+            showToast('Item deleted', 'info');
             loadShopping();
         }
         
@@ -1083,14 +1142,16 @@
             const description = document.getElementById('eventDescription').value.trim();
             
             if (!title || !date) return alert('Please enter title and date!');
-            
+
             await apiCall('addEvent', { title, date, time, description, addedDate: new Date().toISOString() });
-            
+
             document.getElementById('eventTitle').value = '';
             document.getElementById('eventDate').value = '';
             document.getElementById('eventTime').value = '';
             document.getElementById('eventDescription').value = '';
-            
+
+            const dateLabel = new Date(date + 'T00:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
+            showToast(`Event "${title}" added for ${dateLabel}`, 'success');
             refreshAllData();
         }
 
@@ -1151,6 +1212,7 @@
             if (!confirm('Are you sure you want to delete this event?')) return;
 
             await apiCall('deleteEvent', { index });
+            showToast('Event deleted', 'info');
             loadCalendar();
             loadTodayEvents();
         }
