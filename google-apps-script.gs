@@ -12,7 +12,8 @@ const SHEET_NAMES = {
   SPENCER: 'SpencerRoutine',
   GRAINGER: 'GraingerRoutine',
   BIRTHDAYS: 'Birthdays',
-  POINTS: 'FamilyPoints'
+  POINTS: 'FamilyPoints',
+  TOKENS: 'Tokens'
 };
 
 function getSheet(sheetName) {
@@ -98,6 +99,7 @@ function doGet(e) {
       case 'deleteBirthday': result = deleteBirthday(data); invalidateCache(); break;
       case 'updatePoints': result = updatePoints(data); invalidateCache(); break;
       case 'resetRecurringTasks': result = resetRecurringTasks(); invalidateCache(); break;
+      case 'saveToken': result = saveToken(data); break;
       
       default: result = { error: 'Unknown action' };
     }
@@ -566,6 +568,83 @@ function testCalendar() {
   } catch (e) {
     Logger.log('❌ Error: ' + e.toString());
   }
+}
+
+// ==================== PUSH NOTIFICATIONS (FCM V1) ====================
+
+function saveToken(data) {
+  const sheet = getSheet(SHEET_NAMES.TOKENS);
+  // Init headers if empty
+  if (sheet.getLastRow() === 0) {
+    sheet.appendRow(['Token', 'Device', 'SavedAt']);
+    sheet.getRange('1:1').setFontWeight('bold').setBackground('#1A5F7A').setFontColor('#FFFFFF');
+  }
+  const rows = sheet.getDataRange().getValues();
+  const exists = rows.some(r => r[0] === data.token);
+  if (!exists) {
+    sheet.appendRow([data.token, data.device || '', new Date()]);
+  }
+  return { success: true };
+}
+
+function sendPushNotifications() {
+  const sheet = getSheet(SHEET_NAMES.TOKENS);
+  if (sheet.getLastRow() < 2) return; // No tokens
+  const tokens = sheet.getDataRange().getValues().slice(1).map(r => r[0]).filter(Boolean);
+  if (!tokens.length) return;
+
+  // Build summary body
+  const tasks    = getTasks().filter(t => !t.completed);
+  const shopping = getShopping().filter(s => !s.completed);
+  const today    = Utilities.formatDate(new Date(), 'Australia/Sydney', 'yyyy-MM-dd');
+  const events   = getEvents().filter(e => e.date === today);
+
+  const lines = [];
+  if (events.length)   lines.push('📅 ' + events.length + ' event' + (events.length > 1 ? 's' : '') + ' today');
+  if (tasks.length)    lines.push('📝 ' + tasks.length + ' task' + (tasks.length > 1 ? 's' : '') + ' pending');
+  if (shopping.length) lines.push('🛒 ' + shopping.length + ' shopping item' + (shopping.length > 1 ? 's' : ''));
+  const body = lines.length ? lines.join(' · ') : 'All clear today! 🎉';
+
+  // FCM V1 — uses Apps Script OAuth token (no server key required)
+  const accessToken = ScriptApp.getOAuthToken();
+  const projectId   = 'family-organizer-84c71';
+  const url         = 'https://fcm.googleapis.com/v1/projects/' + projectId + '/messages:send';
+
+  tokens.forEach(function(token) {
+    var payload = JSON.stringify({
+      message: {
+        token: token,
+        notification: { title: '👨‍👩‍👧‍👦 Family Morning Summary', body: body }
+      }
+    });
+    try {
+      var resp = UrlFetchApp.fetch(url, {
+        method: 'post',
+        contentType: 'application/json',
+        headers: { Authorization: 'Bearer ' + accessToken },
+        payload: payload,
+        muteHttpExceptions: true
+      });
+      Logger.log('FCM response for token ' + token.substring(0, 20) + '...: ' + resp.getResponseCode());
+    } catch (e) {
+      Logger.log('Push failed: ' + e.toString());
+    }
+  });
+}
+
+function createPushTrigger() {
+  // Remove existing push triggers first
+  ScriptApp.getProjectTriggers().forEach(function(t) {
+    if (t.getHandlerFunction() === 'sendPushNotifications') ScriptApp.deleteTrigger(t);
+  });
+  // 7am Sydney time = 8pm UTC (accounts for AEST UTC+10 / AEDT UTC+11)
+  ScriptApp.newTrigger('sendPushNotifications')
+    .timeBased()
+    .atHour(20)
+    .nearMinute(0)
+    .everyDays(1)
+    .create();
+  Logger.log('✓ Daily push notification trigger created — fires at ~7am Sydney time');
 }
 
 // ==================== DAILY EMAIL ====================

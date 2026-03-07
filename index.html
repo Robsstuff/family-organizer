@@ -4,6 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Family Organizer</title>
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#1A5F7A">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Family">
     <style>
         :root {
             --primary: #1A5F7A;
@@ -598,7 +603,7 @@
             <h1>👨‍👩‍👧‍👦 Family Organizer</h1>
             <div class="subtitle">Rob, Jessie, Spencer & Grainger</div>
             <span id="scoreValue" style="display:none;">0</span>
-            <span id="notifBtn" style="display:none;"></span>
+            <button id="notifBtn" onclick="enableNotifications()" style="position:absolute;top:1.25rem;right:1.5rem;background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.4);color:white;padding:0.4rem 0.9rem;border-radius:8px;cursor:pointer;font-size:0.85rem;font-weight:600;">🔔 Enable Alerts</button>
         </header>
 
         <div class="nav-buttons">
@@ -1853,123 +1858,82 @@
             checkBirthdayAlerts();
         }
 
-        // ==================== PUSH NOTIFICATIONS ====================
+        // ==================== PUSH NOTIFICATIONS (Firebase FCM) ====================
 
-        async function requestNotificationPermission() {
-            if (!('Notification' in window)) return false;
-            if (Notification.permission === 'granted') return true;
-            if (Notification.permission === 'denied') return false;
-            const perm = await Notification.requestPermission();
-            return perm === 'granted';
+        const FIREBASE_CONFIG = {
+            apiKey: "AIzaSyDiVBo057jNj_xf0AIySb40igWFufzpDec",
+            authDomain: "family-organizer-84c71.firebaseapp.com",
+            projectId: "family-organizer-84c71",
+            storageBucket: "family-organizer-84c71.firebasestorage.app",
+            messagingSenderId: "219656964422",
+            appId: "1:219656964422:web:9642eefcabc80c7fa0bd47"
+        };
+        const VAPID_KEY = 'BFHij8DOT5NDlFQVY4u9XesOAljmfeGCnHP-SxVOgKbjlZAicy3e53uUTDjfXoQjCPgH5ngYKoqmHYDjYvHlg3s';
+
+        let _fcmMessaging = null;
+
+        async function initFirebase() {
+            if (_fcmMessaging) return _fcmMessaging;
+            try {
+                // Avoid duplicate app init
+                const app = firebase.apps.length
+                    ? firebase.app()
+                    : firebase.initializeApp(FIREBASE_CONFIG);
+                _fcmMessaging = firebase.messaging(app);
+                return _fcmMessaging;
+            } catch (e) {
+                console.error('Firebase init error:', e);
+                return null;
+            }
         }
 
-        function sendNotification(title, body, tag) {
-            if (Notification.permission !== 'granted') return;
-            const n = new Notification(title, {
-                body,
-                tag: tag || title,
-                icon: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">👨‍👩‍👧‍👦</text></svg>'
-            });
-            setTimeout(() => n.close(), 12000);
-        }
-
-        async function checkAndNotify() {
-            if (Notification.permission !== 'granted') return;
-
-            const todayStr = new Date().toISOString().split('T')[0];
-            const storageKey = `notified-${todayStr}`;
-            if (localStorage.getItem(storageKey)) return; // Already notified today
-
-            const today = new Date();
-            const todayMonth = today.getMonth();
-            const todayDay = today.getDate();
-
-            const [events, birthdays, tasks] = await Promise.all([
-                apiCall('getEvents'),
-                apiCall('getBirthdays'),
-                apiCall('getTasks')
-            ]);
-
-            const notifications = [];
-
-            // Today's birthdays
-            if (birthdays) {
-                birthdays.forEach(b => {
-                    const bd = new Date(b.date);
-                    if (bd.getMonth() === todayMonth && bd.getDate() === todayDay) {
-                        notifications.push({ title: `🎂 Happy Birthday ${b.name}!`, body: `It's ${b.name}'s birthday today!`, tag: `bday-${b.name}` });
-                    }
-                });
-                // Tomorrow's birthdays
-                const tomorrow = new Date(today);
-                tomorrow.setDate(tomorrow.getDate() + 1);
-                birthdays.forEach(b => {
-                    const bd = new Date(b.date);
-                    if (bd.getMonth() === tomorrow.getMonth() && bd.getDate() === tomorrow.getDate()) {
-                        notifications.push({ title: `🎂 Birthday Tomorrow!`, body: `${b.name}'s birthday is tomorrow — don't forget!`, tag: `bday-tmrw-${b.name}` });
-                    }
-                });
+        async function registerSW() {
+            if (!('serviceWorker' in navigator)) return null;
+            try {
+                return await navigator.serviceWorker.register('./sw.js');
+            } catch (e) {
+                console.error('SW registration failed:', e);
+                return null;
             }
-
-            // Today's events
-            if (events) {
-                events.filter(e => e.date && e.date.startsWith(todayStr)).forEach(e => {
-                    notifications.push({ title: `📅 Today: ${e.title}`, body: e.time ? `Starts at ${e.time}` : 'All day', tag: `evt-${e.title}-${todayStr}` });
-                });
-            }
-
-            // Pending high-priority tasks
-            if (tasks) {
-                const high = tasks.filter(t => !t.completed && t.priority === 'high');
-                if (high.length > 0) {
-                    notifications.push({
-                        title: `📝 ${high.length} High Priority Task${high.length > 1 ? 's' : ''} Pending`,
-                        body: high.slice(0, 3).map(t => `• ${t.task}${t.assignee ? ` (${t.assignee})` : ''}`).join('\n'),
-                        tag: `tasks-high-${todayStr}`
-                    });
-                }
-            }
-
-            // Pending shopping items
-            const shopping = await apiCall('getShopping');
-            if (shopping) {
-                const pending = shopping.filter(s => !s.completed);
-                if (pending.length > 0) {
-                    notifications.push({
-                        title: `🛒 ${pending.length} Item${pending.length > 1 ? 's' : ''} on Shopping List`,
-                        body: pending.slice(0, 3).map(s => `• ${s.item}`).join('\n'),
-                        tag: `shopping-${todayStr}`
-                    });
-                }
-            }
-
-            notifications.forEach((n, i) => {
-                setTimeout(() => sendNotification(n.title, n.body, n.tag), i * 2500);
-            });
-
-            if (notifications.length > 0) localStorage.setItem(storageKey, '1');
         }
 
         async function enableNotifications() {
-            const granted = await requestNotificationPermission();
             const btn = document.getElementById('notifBtn');
-            if (granted) {
-                if (btn) btn.textContent = '🔔 Reminders On';
+            try {
+                if (!('Notification' in window)) { alert('Notifications not supported in this browser.'); return; }
+                const messaging = await initFirebase();
+                if (!messaging) { alert('Could not initialise notifications.'); return; }
+                const swReg = await registerSW();
+                if (!swReg) { alert('Service worker required — try Chrome or Edge.'); return; }
+                const permission = await Notification.requestPermission();
+                if (permission !== 'granted') {
+                    alert('Notifications blocked. Please enable them in your browser settings.');
+                    return;
+                }
+                const token = await messaging.getToken({ vapidKey: VAPID_KEY, serviceWorkerRegistration: swReg });
+                if (!token) { console.error('No FCM token received'); return; }
+                await apiCall('saveToken', { token, device: navigator.userAgent.substring(0, 120) });
+                if (btn) { btn.textContent = '🔔 Alerts On'; btn.style.background = 'rgba(34,197,94,0.35)'; }
                 localStorage.setItem('notificationsEnabled', '1');
-                await checkAndNotify();
-            } else {
-                alert('Notifications blocked. Please enable them in browser settings and try again.');
+                showToast('Daily alerts enabled! You\'ll be notified at 7am 🔔', 'success');
+            } catch (e) {
+                console.error('Notification setup error:', e);
+                showToast('Could not enable notifications', 'error');
             }
         }
 
-        // Auto-enable if previously granted
-        if (localStorage.getItem('notificationsEnabled') && Notification.permission === 'granted') {
-            document.addEventListener('DOMContentLoaded', () => {
-                const btn = document.getElementById('notifBtn');
-                if (btn) btn.textContent = '🔔 Reminders On';
-            });
-            setTimeout(checkAndNotify, 3000); // Wait for data to load
+        async function initNotifications() {
+            const btn = document.getElementById('notifBtn');
+            // Register SW on every load for offline support
+            const swReg = await registerSW();
+            if (localStorage.getItem('notificationsEnabled') && Notification.permission === 'granted') {
+                if (btn) { btn.textContent = '🔔 Alerts On'; btn.style.background = 'rgba(34,197,94,0.35)'; }
+            } else if (Notification.permission === 'denied') {
+                if (btn) btn.textContent = '🔕 Blocked';
+            }
         }
+
+        window.addEventListener('load', initNotifications);
 
         async function checkBirthdayAlerts(birthdays) {
             if (!birthdays) birthdays = await apiCall('getBirthdays');
@@ -1999,5 +1963,7 @@
             }
         }
     </script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-messaging-compat.js"></script>
 </body>
 </html>
