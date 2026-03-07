@@ -1040,10 +1040,12 @@
                     return;
                 }
                 
-                const priorityOrder = { high: 0, medium: 1, low: 2 };
                 tasks.sort((a, b) => {
                     if (a.completed !== b.completed) return a.completed ? 1 : -1;
-                    return (priorityOrder[a.priority] || 1) - (priorityOrder[b.priority] || 1);
+                    // Newest added first for incomplete items
+                    const dateA = a.addedDate ? new Date(a.addedDate) : new Date(0);
+                    const dateB = b.addedDate ? new Date(b.addedDate) : new Date(0);
+                    return dateB - dateA;
                 });
 
                 let completedShown = 0;
