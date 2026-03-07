@@ -825,6 +825,7 @@
         let weatherData = {};
         let currentMonth = new Date();
         let calendarEvents = [];
+        let currentData = null; // In-memory store for optimistic UI updates
         
         familyMembers.forEach(member => memberScores[member] = 0);
         
@@ -971,14 +972,20 @@
             const priority = document.getElementById('taskPriority').value;
             const task = input.value.trim();
             if (!task) return alert('Please enter a task!');
-            const added = new Date().toISOString();
-            await apiCall('addTask', { task, assignee, priority, addedDate: added });
+            const addedDate = new Date().toISOString();
+            // Clear inputs immediately
             input.value = '';
             document.getElementById('taskAssignee').value = '';
             document.getElementById('taskPriority').value = 'medium';
+            // Optimistic update — show item instantly
+            if (currentData) {
+                currentData.tasks.push({ task, assignee, priority, frequency: 'none', completed: false, addedDate, index: currentData.tasks.length });
+                loadTasks(currentData.tasks);
+            }
             const dateLabel = new Date().toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
             showToast(`Task added on ${dateLabel}`, 'success');
-            loadTasks();
+            // Save in background, then sync
+            apiCall('addTask', { task, assignee, priority, addedDate }).then(() => refreshAllData());
         }
 
         async function addTaskFromDashboard() {
@@ -988,28 +995,36 @@
             const frequency = document.getElementById('taskFrequencyDash').value;
             const task = input.value.trim();
             if (!task) return alert('Please enter a task!');
-            await apiCall('addTask', { task, assignee, priority, frequency, addedDate: new Date().toISOString() });
+            const addedDate = new Date().toISOString();
+            // Clear inputs immediately
             input.value = '';
             document.getElementById('taskAssigneeDash').value = '';
             document.getElementById('taskPriorityDash').value = 'medium';
             document.getElementById('taskFrequencyDash').value = 'none';
+            // Optimistic update — show item instantly
+            if (currentData) {
+                currentData.tasks.push({ task, assignee, priority, frequency, completed: false, addedDate, index: currentData.tasks.length });
+                loadTasks(currentData.tasks);
+            }
             const dateLabel = new Date().toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
             showToast(`Task added on ${dateLabel}`, 'success');
-            loadTasks();
+            // Save in background, then sync
+            apiCall('addTask', { task, assignee, priority, frequency, addedDate }).then(() => refreshAllData());
         }
 
         async function completeTask(index, assignee) {
-            await apiCall('completeTask', { index, completedDate: new Date().toISOString(), completedBy: assignee });
-
-            // Show +1 popup for whoever gets the point (Rob if unassigned)
             const recipient = (assignee && familyMembers.includes(assignee)) ? assignee : 'Rob';
+            // Optimistic update — mark as done instantly
+            if (currentData) {
+                const t = currentData.tasks.find(t => t.index === index);
+                if (t) { t.completed = true; t.completedDate = new Date().toISOString(); t.completedBy = recipient; }
+                loadTasks(currentData.tasks);
+            }
             updateScore(1, recipient);
             showToast(`Task complete! +1 point to ${recipient}`, 'success');
-
             renderAchievements();
-            loadTasks();
-            // Reload true points from server to keep leaderboard accurate
-            loadPoints();
+            // Save in background, then sync
+            apiCall('completeTask', { index, completedDate: new Date().toISOString(), completedBy: recipient }).then(() => refreshAllData());
         }
         
         async function loadTasks(tasks) {
@@ -1068,33 +1083,50 @@
             const input = document.getElementById('newShoppingItem');
             const item = input.value.trim();
             if (!item) return alert('Please enter an item!');
-            await apiCall('addShoppingItem', { item });
             input.value = '';
+            // Optimistic update
+            if (currentData) {
+                currentData.shopping.push({ item, completed: false, index: currentData.shopping.length });
+                loadShopping(currentData.shopping);
+            }
             const dateLabel = new Date().toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
             showToast(`"${item}" added on ${dateLabel}`, 'success');
-            loadShopping();
+            apiCall('addShoppingItem', { item }).then(() => refreshAllData());
         }
 
         async function addShoppingItemFromDashboard() {
             const input = document.getElementById('newShoppingItemDash');
             const item = input.value.trim();
             if (!item) return alert('Please enter an item!');
-            await apiCall('addShoppingItem', { item });
             input.value = '';
+            // Optimistic update
+            if (currentData) {
+                currentData.shopping.push({ item, completed: false, index: currentData.shopping.length });
+                loadShopping(currentData.shopping);
+            }
             const dateLabel = new Date().toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
             showToast(`"${item}" added on ${dateLabel}`, 'success');
-            loadShopping();
+            apiCall('addShoppingItem', { item }).then(() => refreshAllData());
         }
 
         async function toggleShoppingItem(index) {
-            await apiCall('toggleShoppingItem', { index });
-            loadShopping();
+            // Optimistic update
+            if (currentData) {
+                const it = currentData.shopping.find(s => s.index === index);
+                if (it) it.completed = !it.completed;
+                loadShopping(currentData.shopping);
+            }
+            apiCall('toggleShoppingItem', { index }).then(() => refreshAllData());
         }
 
         async function deleteShoppingItem(index) {
-            await apiCall('deleteShoppingItem', { index });
+            // Optimistic update
+            if (currentData) {
+                currentData.shopping = currentData.shopping.filter(s => s.index !== index);
+                loadShopping(currentData.shopping);
+            }
             showToast('Item deleted', 'info');
-            loadShopping();
+            apiCall('deleteShoppingItem', { index }).then(() => refreshAllData());
         }
         
         async function loadShopping(items) {
@@ -1149,16 +1181,23 @@
             
             if (!title || !date) return alert('Please enter title and date!');
 
-            await apiCall('addEvent', { title, date, time, description, addedDate: new Date().toISOString() });
-
+            // Clear inputs immediately
             document.getElementById('eventTitle').value = '';
             document.getElementById('eventDate').value = '';
             document.getElementById('eventTime').value = '';
             document.getElementById('eventDescription').value = '';
 
+            // Optimistic update — show event on calendar instantly
+            if (currentData) {
+                currentData.events.push({ title, date, time, description, source: 'sheet', index: currentData.events.length });
+                loadCalendar(currentData.events);
+                renderWeekCalendar(currentData.events, currentData.birthdays);
+            }
+
             const dateLabel = new Date(date + 'T00:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
             showToast(`Event "${title}" added for ${dateLabel}`, 'success');
-            refreshAllData();
+            // Save in background then sync
+            apiCall('addEvent', { title, date, time, description, addedDate: new Date().toISOString() }).then(() => refreshAllData());
         }
 
         function renderWeekCalendar(events, birthdays) {
@@ -1714,6 +1753,7 @@
         const CACHE_KEY = 'familyOrganizerData';
 
         function renderData(data) {
+            currentData = data;
             loadPoints(data.points);
             loadTasks(data.tasks);
             loadShopping(data.shopping);
