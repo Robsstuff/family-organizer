@@ -613,6 +613,7 @@
             <button class="nav-btn" data-section="calendar">📅 Calendar</button>
             <button class="nav-btn" data-section="routines">👶 Routines</button>
             <button class="nav-btn" data-section="birthdays">🎂 Birthdays</button>
+            <button class="nav-btn" onclick="goToTasks(this)">📝 Tasks</button>
         </div>
 
         <!-- Dashboard -->
@@ -630,7 +631,7 @@
             </div>
             
             <div class="dashboard-grid">
-                <div class="dashboard-section">
+                <div class="dashboard-section" id="todoSectionDash">
                     <h3>📝 To-Do List</h3>
                     <div class="input-group">
                         <input type="text" id="newTaskDash" placeholder="New task..." style="min-width: 120px;">
@@ -823,9 +824,20 @@
         let score = 0;
         let memberScores = {};
         let weatherData = {};
-        let currentMonth = new Date();
         let calendarEvents = [];
         let currentData = null; // In-memory store for optimistic UI updates
+
+        // Always work in Newcastle/Sydney time
+        function getSydneyToday() {
+            const s = new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
+            const [y, m, d] = s.split('-').map(Number);
+            return new Date(y, m - 1, d);
+        }
+        function toDateStr(date) {
+            return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
+        }
+
+        let currentMonth = getSydneyToday();
         
         familyMembers.forEach(member => memberScores[member] = 0);
         
@@ -915,17 +927,28 @@
         document.querySelectorAll('.nav-btn').forEach(btn => {
             btn.addEventListener('click', async () => {
                 const section = btn.dataset.section;
+                if (!section) return; // handled by onclick (e.g. Tasks button)
                 document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
                 btn.classList.add('active');
                 document.querySelectorAll('.content-section').forEach(s => s.classList.remove('active'));
                 document.getElementById(section).classList.add('active');
-                
+
                 if (section === 'calendar' && Object.keys(weatherData).length === 0) {
                     await fetchWeather();
                     loadCalendar();
                 }
             });
         });
+
+        function goToTasks(btn) {
+            document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            document.querySelectorAll('.content-section').forEach(s => s.classList.remove('active'));
+            document.getElementById('dashboard').classList.add('active');
+            setTimeout(() => {
+                document.getElementById('todoSectionDash').scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 50);
+        }
         
         function updateScore(points, member = null) {
             score += points;
@@ -1206,8 +1229,7 @@
             const container = document.getElementById('weekCalendar');
             if (!container) return;
 
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
+            const today = getSydneyToday();
             const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
             container.innerHTML = '';
@@ -1215,7 +1237,7 @@
             for (let i = 0; i < 7; i++) {
                 const date = new Date(today);
                 date.setDate(today.getDate() + i);
-                const dateStr = date.toISOString().split('T')[0];
+                const dateStr = toDateStr(date);
                 const isToday = i === 0;
 
                 const box = document.createElement('div');
@@ -1279,9 +1301,10 @@
                 });
             }
 
-            const today = new Date().toISOString().split('T')[0];
-            const todayMonth = new Date().getMonth();
-            const todayDay = new Date().getDate();
+            const todaySydney = getSydneyToday();
+            const today = toDateStr(todaySydney);
+            const todayMonth = todaySydney.getMonth();
+            const todayDay = todaySydney.getDate();
             
             const container = document.getElementById('todayEvents');
             container.innerHTML = '';
@@ -1347,12 +1370,10 @@
             }); // Keep ALL deduped events for calendar grid
             
             // Filter out past events for the list view
-            const today = new Date();
-            today.setHours(0, 0, 0, 0); // Start of today
-            
+            const today = getSydneyToday();
+
             const upcomingEvents = events.filter(event => {
-                const eventDate = new Date(event.date);
-                eventDate.setHours(0, 0, 0, 0); // Start of event day
+                const eventDate = new Date(event.date + 'T00:00:00');
                 return eventDate >= today; // Only show today and future events
             });
             
@@ -1444,7 +1465,7 @@
             const daysInMonth = new Date(year, month + 1, 0).getDate();
             const daysInPrevMonth = new Date(year, month, 0).getDate();
             
-            const today = new Date();
+            const today = getSydneyToday();
             const isCurrentMonth = today.getMonth() === month && today.getFullYear() === year;
             const todayDate = today.getDate();
             
