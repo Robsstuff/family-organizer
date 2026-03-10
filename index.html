@@ -2025,7 +2025,148 @@
                 content.innerHTML = html;
             }
         }
+        // ==================== MORNING SUMMARY MODAL ====================
+
+        async function showSummaryModal() {
+            document.getElementById('summaryModal').style.display = 'flex';
+            const todaySyd = getSydneyToday();
+            const today = toDateStr(todaySyd);
+            const dayName = todaySyd.toLocaleDateString('en-AU', {
+                weekday: 'long', day: 'numeric', month: 'long', timeZone: 'Australia/Sydney'
+            });
+            document.getElementById('summaryDate').textContent = dayName;
+
+            const data = currentData || await apiCall('getData');
+            if (!data) {
+                document.getElementById('summaryContent').innerHTML = '<p style="color:#EF4444;text-align:center;">Could not load data.</p>';
+                return;
+            }
+
+            const todayEvents     = (data.events   || []).filter(e => e.date === today);
+            const pendingTasks    = (data.tasks     || []).filter(t => !t.completed);
+            const pendingShopping = (data.shopping  || []).filter(s => !s.completed);
+
+            // Upcoming events next 7 days
+            const nextWeek = new Date(todaySyd);
+            nextWeek.setDate(nextWeek.getDate() + 7);
+            const upcoming = (data.events || []).filter(e => {
+                if (!e.date || e.date === today) return false;
+                const ed = new Date(e.date + 'T00:00:00');
+                return ed > todaySyd && ed <= nextWeek;
+            }).sort((a, b) => new Date(a.date) - new Date(b.date));
+
+            // Today's birthdays
+            const todayBirthdays = (data.birthdays || []).filter(b => {
+                if (!b.date) return false;
+                const bd = new Date(b.date);
+                return bd.getMonth() === todaySyd.getMonth() && bd.getDate() === todaySyd.getDate();
+            });
+
+            let html = '';
+
+            if (todayBirthdays.length) {
+                html += `<div style="background:#FFF9E6;border:2px solid #FFD700;border-radius:12px;padding:1rem;margin-bottom:1.25rem;text-align:center;">`;
+                todayBirthdays.forEach(b => {
+                    html += `<div style="font-weight:700;font-size:1.05rem;">🎂 ${b.name}'s Birthday Today!</div>`;
+                });
+                html += `</div>`;
+            }
+
+            // Events today
+            html += `<div style="margin-bottom:1.25rem;">
+                <div style="font-weight:700;color:#1A5F7A;margin-bottom:0.5rem;font-size:0.95rem;">📅 TODAY'S EVENTS</div>`;
+            if (todayEvents.length) {
+                todayEvents.forEach(e => {
+                    html += `<div style="padding:0.5rem 0;border-bottom:1px solid #F1F5F9;">
+                        <strong>${e.title}</strong>${e.time ? `<span style="color:#64748B;font-size:0.85rem;"> at ${e.time}</span>` : ''}
+                        ${e.description ? `<div style="font-size:0.82rem;color:#64748B;margin-top:0.2rem;">${e.description}</div>` : ''}
+                    </div>`;
+                });
+            } else {
+                html += `<div style="color:#94A3B8;font-style:italic;font-size:0.9rem;">Nothing scheduled today</div>`;
+            }
+            html += `</div>`;
+
+            // Upcoming this week
+            if (upcoming.length) {
+                html += `<div style="margin-bottom:1.25rem;">
+                    <div style="font-weight:700;color:#8B5CF6;margin-bottom:0.5rem;font-size:0.95rem;">🗓️ COMING UP</div>`;
+                upcoming.slice(0, 5).forEach(e => {
+                    const d = new Date(e.date + 'T00:00:00').toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' });
+                    html += `<div style="padding:0.4rem 0;border-bottom:1px solid #F1F5F9;font-size:0.9rem;">${e.title}<span style="color:#64748B;"> — ${d}</span></div>`;
+                });
+                html += `</div>`;
+            }
+
+            // Tasks
+            html += `<div style="margin-bottom:1.25rem;">
+                <div style="font-weight:700;color:#EF4444;margin-bottom:0.5rem;font-size:0.95rem;">📝 TASKS (${pendingTasks.length} pending)</div>`;
+            if (pendingTasks.length) {
+                const sorted = [...pendingTasks].sort((a, b) => ({ high: 0, medium: 1, low: 2 }[a.priority] || 1) - ({ high: 0, medium: 1, low: 2 }[b.priority] || 1));
+                sorted.forEach(t => {
+                    const priColor = t.priority === 'high' ? '#EF4444' : t.priority === 'low' ? '#3B82F6' : '#F59E0B';
+                    const assignee = t.assignee ? `<span style="background:#1A5F7A;color:white;padding:1px 6px;border-radius:8px;font-size:0.75rem;margin-left:4px;">${t.assignee}</span>` : '';
+                    html += `<div style="padding:0.4rem 0;border-bottom:1px solid #F1F5F9;display:flex;align-items:center;gap:0.3rem;flex-wrap:wrap;">
+                        <span style="color:${priColor};font-size:0.72rem;font-weight:700;">[${t.priority.toUpperCase()}]</span>
+                        <span style="font-size:0.9rem;">${t.task}</span>${assignee}
+                    </div>`;
+                });
+            } else {
+                html += `<div style="color:#22C55E;font-weight:600;">All tasks done! 🎉</div>`;
+            }
+            html += `</div>`;
+
+            // Shopping
+            if (pendingShopping.length) {
+                html += `<div style="margin-bottom:1rem;">
+                    <div style="font-weight:700;color:#22C55E;margin-bottom:0.5rem;font-size:0.95rem;">🛒 SHOPPING (${pendingShopping.length} items)</div>`;
+                pendingShopping.forEach(s => {
+                    html += `<div style="padding:0.3rem 0;border-bottom:1px solid #F1F5F9;font-size:0.9rem;">• ${s.item}</div>`;
+                });
+                html += `</div>`;
+            }
+
+            html += `<button onclick="closeSummaryModal()" style="width:100%;margin-top:1rem;padding:0.875rem;background:var(--primary);color:white;border:none;border-radius:12px;font-weight:600;font-size:1rem;cursor:pointer;">Open App →</button>`;
+            document.getElementById('summaryContent').innerHTML = html;
+        }
+
+        function closeSummaryModal() {
+            document.getElementById('summaryModal').style.display = 'none';
+            if (window.location.search.includes('summary=1')) {
+                window.history.replaceState({}, '', window.location.pathname);
+            }
+        }
+
+        // Listen for show_summary message from service worker (app already open when notification tapped)
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.addEventListener('message', e => {
+                if (e.data?.type === 'show_summary') showSummaryModal();
+            });
+        }
+
+        // Show summary if app was opened by tapping the notification
+        if (window.location.search.includes('summary=1')) {
+            refreshAllData().then(() => showSummaryModal());
+        }
+
     </script>
+    <!-- Morning Summary Modal -->
+    <div id="summaryModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:9999;overflow-y:auto;padding:1rem;align-items:flex-start;justify-content:center;">
+        <div style="background:white;border-radius:20px;width:100%;max-width:480px;margin:1rem auto;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.3);">
+            <div style="background:linear-gradient(135deg,#1A5F7A,#114356);padding:1.5rem;">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+                    <div>
+                        <div style="font-size:1.4rem;font-weight:700;color:white;margin-bottom:0.2rem;">👨‍👩‍👧‍👦 Morning Summary</div>
+                        <div id="summaryDate" style="color:rgba(255,255,255,0.8);font-size:0.9rem;"></div>
+                    </div>
+                    <button onclick="closeSummaryModal()" style="background:rgba(255,255,255,0.2);border:none;color:white;width:34px;height:34px;border-radius:50%;cursor:pointer;font-size:1.1rem;flex-shrink:0;">✕</button>
+                </div>
+            </div>
+            <div id="summaryContent" style="padding:1.25rem 1.5rem;max-height:75vh;overflow-y:auto;">
+                <div class="loading">Loading...</div>
+            </div>
+        </div>
+    </div>
     <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-messaging-compat.js"></script>
 </body>

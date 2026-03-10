@@ -58,22 +58,28 @@ messaging.onBackgroundMessage(payload => {
     badge: './icon-192.svg',
     tag: 'family-daily',
     renotify: true,
-    data: { url: '/family-organizer/' }
+    data: {
+      url: 'https://robsstuff.github.io/family-organizer/?summary=1',
+      type: payload.data?.type || ''
+    }
   };
   return self.registration.showNotification(title, options);
 });
 
-// When user taps a notification, open/focus the app
+// When user taps a notification, open/focus the app and trigger the summary modal
 self.addEventListener('notificationclick', e => {
   e.notification.close();
-  const targetUrl = e.notification.data?.url || '/family-organizer/';
+  const targetUrl = e.notification.data?.url || 'https://robsstuff.github.io/family-organizer/?summary=1';
   e.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then(windowClients => {
       for (const client of windowClients) {
         if (client.url.includes('family-organizer') && 'focus' in client) {
+          // App already open — tell it to show the summary modal
+          client.postMessage({ type: 'show_summary' });
           return client.focus();
         }
       }
+      // App not open — open it with ?summary=1 so it shows the modal on load
       return clients.openWindow(targetUrl);
     })
   );

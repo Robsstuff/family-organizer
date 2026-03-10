@@ -589,23 +589,46 @@ function saveToken(data) {
 
 function sendPushNotifications() {
   const sheet = getSheet(SHEET_NAMES.TOKENS);
-  if (sheet.getLastRow() < 2) return; // No tokens
+  if (sheet.getLastRow() < 2) return;
   const tokens = sheet.getDataRange().getValues().slice(1).map(r => r[0]).filter(Boolean);
   if (!tokens.length) return;
 
-  // Build summary body
-  const tasks    = getTasks().filter(t => !t.completed);
-  const shopping = getShopping().filter(s => !s.completed);
-  const today    = Utilities.formatDate(new Date(), 'Australia/Sydney', 'yyyy-MM-dd');
-  const events   = getEvents().filter(e => e.date === today);
+  const today   = Utilities.formatDate(new Date(), 'Australia/Sydney', 'yyyy-MM-dd');
+  const dayName = Utilities.formatDate(new Date(), 'Australia/Sydney', 'EEEE d MMM');
+  const todayMD = Utilities.formatDate(new Date(), 'Australia/Sydney', 'MM-dd');
 
-  const lines = [];
-  if (events.length)   lines.push('📅 ' + events.length + ' event' + (events.length > 1 ? 's' : '') + ' today');
-  if (tasks.length)    lines.push('📝 ' + tasks.length + ' task' + (tasks.length > 1 ? 's' : '') + ' pending');
-  if (shopping.length) lines.push('🛒 ' + shopping.length + ' shopping item' + (shopping.length > 1 ? 's' : ''));
-  const body = lines.length ? lines.join(' · ') : 'All clear today! 🎉';
+  const pendingTasks    = getTasks().filter(t => !t.completed);
+  const pendingShopping = getShopping().filter(s => !s.completed);
+  const todayEvents     = getEvents().filter(e => e.date === today);
+  const todayBirthdays  = getBirthdays().filter(b => b.date && b.date.substring(5) === todayMD);
 
-  // FCM V1 — uses Apps Script OAuth token (no server key required)
+  // --- Notification title ---
+  const title = '👨‍👩‍👧‍👦 Good morning! ' + dayName;
+
+  // --- Notification body: show actual event names, not just counts ---
+  const bodyLines = [];
+  todayBirthdays.forEach(b => bodyLines.push('🎂 ' + b.name + "'s birthday today!"));
+
+  if (todayEvents.length) {
+    todayEvents.slice(0, 3).forEach(e => {
+      bodyLines.push('📅 ' + e.title + (e.time ? ' at ' + e.time : ''));
+    });
+    if (todayEvents.length > 3) bodyLines.push('  +' + (todayEvents.length - 3) + ' more events');
+  } else {
+    bodyLines.push('📅 No events today');
+  }
+
+  bodyLines.push(pendingTasks.length
+    ? '📝 ' + pendingTasks.length + ' task' + (pendingTasks.length > 1 ? 's' : '') + ' pending'
+    : '📝 All tasks done! 🎉');
+
+  if (pendingShopping.length) {
+    bodyLines.push('🛒 ' + pendingShopping.length + ' item' + (pendingShopping.length > 1 ? 's' : '') + ' needed');
+  }
+
+  const body = bodyLines.join('\n');
+
+  // --- FCM V1 ---
   const accessToken = ScriptApp.getOAuthToken();
   const projectId   = 'family-organizer-84c71';
   const url         = 'https://fcm.googleapis.com/v1/projects/' + projectId + '/messages:send';
@@ -614,7 +637,8 @@ function sendPushNotifications() {
     var payload = JSON.stringify({
       message: {
         token: token,
-        notification: { title: '👨‍👩‍👧‍👦 Family Morning Summary', body: body }
+        notification: { title: title, body: body },
+        data: { type: 'daily_summary' }
       }
     });
     try {
@@ -625,7 +649,7 @@ function sendPushNotifications() {
         payload: payload,
         muteHttpExceptions: true
       });
-      Logger.log('FCM response for token ' + token.substring(0, 20) + '...: ' + resp.getResponseCode());
+      Logger.log('FCM ' + resp.getResponseCode() + ' for ' + token.substring(0, 20) + '...');
     } catch (e) {
       Logger.log('Push failed: ' + e.toString());
     }
@@ -637,14 +661,15 @@ function createPushTrigger() {
   ScriptApp.getProjectTriggers().forEach(function(t) {
     if (t.getHandlerFunction() === 'sendPushNotifications') ScriptApp.deleteTrigger(t);
   });
-  // 7am Sydney time = 8pm UTC (accounts for AEST UTC+10 / AEDT UTC+11)
+  // Use inTimezone so GAS respects DST automatically — always fires at 7am Sydney local time
   ScriptApp.newTrigger('sendPushNotifications')
     .timeBased()
-    .atHour(20)
+    .inTimezone('Australia/Sydney')
+    .atHour(7)
     .nearMinute(0)
     .everyDays(1)
     .create();
-  Logger.log('✓ Daily push notification trigger created — fires at ~7am Sydney time');
+  Logger.log('✓ Daily push trigger set — 7:00am Australia/Sydney (DST-aware)');
 }
 
 // ==================== DAILY EMAIL ====================
