@@ -13,8 +13,11 @@ const SHEET_NAMES = {
   GRAINGER: 'GraingerRoutine',
   BIRTHDAYS: 'Birthdays',
   POINTS: 'FamilyPoints',
-  TOKENS: 'Tokens'
+  TOKENS: 'Tokens',
+  CLEANING: 'CleaningTasks'
 };
+
+const CLEANING_ROOMS = ['Bathrooms', 'Kitchen and Dining', 'Lounge and Playroom', 'Bedroom and Hallway', 'Kids Bedrooms'];
 
 function getSheet(sheetName) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -46,6 +49,9 @@ function initializeSheet(sheet, sheetName) {
       break;
     case SHEET_NAMES.POINTS:
       sheet.getRange('A1:C1').setValues([['Member', 'Points', 'LastUpdated']]);
+      break;
+    case SHEET_NAMES.CLEANING:
+      sheet.getRange('A1:F1').setValues([['Room', 'AssignedDay', 'Completed', 'CompletedBy', 'CompletedDate', 'LastReset']]);
       break;
   }
   sheet.getRange('1:1').setFontWeight('bold').setBackground('#1A5F7A').setFontColor('#FFFFFF');
@@ -79,7 +85,8 @@ function doGet(e) {
             spencerRoutine: getRoutine('spencer'),
             graingerRoutine: getRoutine('grainger'),
             birthdays: getBirthdays(),
-            points: getPoints()
+            points: getPoints(),
+            cleaning: getCleaning()
           };
           cache.put('allData', JSON.stringify(result), 300); // cache 5 mins
         }
@@ -99,7 +106,11 @@ function doGet(e) {
       case 'deleteBirthday': result = deleteBirthday(data); invalidateCache(); break;
       case 'updatePoints': result = updatePoints(data); invalidateCache(); break;
       case 'resetRecurringTasks': result = resetRecurringTasks(); invalidateCache(); break;
-      case 'saveToken': result = saveToken(data); break;
+      case 'saveToken':          result = saveToken(data); break;
+      case 'getCleaning':        result = getCleaning(); break;
+      case 'updateCleaningDay':  result = updateCleaningDay(data); invalidateCache(); break;
+      case 'toggleCleaningRoom': result = toggleCleaningRoom(data); invalidateCache(); break;
+      case 'resetCleaningTasks': result = resetCleaningTasks(); invalidateCache(); break;
       
       default: result = { error: 'Unknown action' };
     }
@@ -570,6 +581,81 @@ function testCalendar() {
   }
 }
 
+// ==================== CLEANING ROTA ====================
+
+function getCleaning() {
+  const sheet = getSheet(SHEET_NAMES.CLEANING);
+  // Auto-init rows if sheet is new/empty
+  if (sheet.getLastRow() <= 1) {
+    CLEANING_ROOMS.forEach(function(room) {
+      sheet.appendRow([room, 'Any', false, '', '', '']);
+    });
+  }
+  const data = sheet.getDataRange().getValues();
+  const result = [];
+  for (var i = 1; i < data.length; i++) {
+    var row = data[i];
+    if (!row[0]) continue;
+    result.push({
+      room: row[0],
+      assignedDay: row[1] || 'Any',
+      completed: row[2] || false,
+      completedBy: row[3] || '',
+      completedDate: row[4] ? new Date(row[4]).toISOString() : null,
+      index: i - 1
+    });
+  }
+  return result;
+}
+
+function updateCleaningDay(data) {
+  var sheet = getSheet(SHEET_NAMES.CLEANING);
+  sheet.getRange(data.index + 2, 2).setValue(data.day);
+  return { success: true };
+}
+
+function toggleCleaningRoom(data) {
+  var sheet = getSheet(SHEET_NAMES.CLEANING);
+  var rowIndex = data.index + 2;
+  var newVal = !sheet.getRange(rowIndex, 3).getValue();
+  sheet.getRange(rowIndex, 3).setValue(newVal);
+  if (newVal) {
+    sheet.getRange(rowIndex, 4).setValue(data.completedBy || '');
+    sheet.getRange(rowIndex, 5).setValue(new Date());
+    if (data.completedBy) incrementPoints(data.completedBy, 1);
+  } else {
+    sheet.getRange(rowIndex, 4).setValue('');
+    sheet.getRange(rowIndex, 5).setValue('');
+  }
+  return { success: true };
+}
+
+function resetCleaningTasks() {
+  var sheet = getSheet(SHEET_NAMES.CLEANING);
+  var data = sheet.getDataRange().getValues();
+  for (var i = 1; i < data.length; i++) {
+    sheet.getRange(i + 1, 3).setValue(false);
+    sheet.getRange(i + 1, 4).setValue('');
+    sheet.getRange(i + 1, 5).setValue('');
+    sheet.getRange(i + 1, 6).setValue(new Date());
+  }
+  return { success: true };
+}
+
+function createCleaningTrigger() {
+  ScriptApp.getProjectTriggers().forEach(function(t) {
+    if (t.getHandlerFunction() === 'resetCleaningTasks') ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('resetCleaningTasks')
+    .timeBased()
+    .inTimezone('Australia/Sydney')
+    .onWeekDay(ScriptApp.WeekDay.SUNDAY)
+    .atHour(17)
+    .nearMinute(0)
+    .create();
+  Logger.log('✓ Cleaning reset trigger set — Sundays 5pm Sydney time');
+}
+
 // ==================== PUSH NOTIFICATIONS (FCM V1) ====================
 
 function saveToken(data) {
@@ -633,6 +719,8 @@ function sendPushNotifications() {
   const projectId   = 'family-organizer-84c71';
   const url         = 'https://fcm.googleapis.com/v1/projects/' + projectId + '/messages:send';
 
+  const deadTokens = [];
+
   tokens.forEach(function(token) {
     var payload = JSON.stringify({
       message: {
@@ -649,11 +737,22 @@ function sendPushNotifications() {
         payload: payload,
         muteHttpExceptions: true
       });
-      Logger.log('FCM ' + resp.getResponseCode() + ' for ' + token.substring(0, 20) + '...');
+      var code = resp.getResponseCode();
+      Logger.log('FCM ' + code + ' for ' + token.substring(0, 20) + '...');
+      if (code === 404) deadTokens.push(token); // expired/unregistered token
     } catch (e) {
       Logger.log('Push failed: ' + e.toString());
     }
   });
+
+  // Remove expired tokens from the sheet
+  if (deadTokens.length) {
+    var rows = sheet.getDataRange().getValues();
+    for (var i = rows.length - 1; i >= 1; i--) {
+      if (deadTokens.indexOf(rows[i][0]) !== -1) sheet.deleteRow(i + 1);
+    }
+    Logger.log('Removed ' + deadTokens.length + ' expired token(s)');
+  }
 }
 
 function createPushTrigger() {

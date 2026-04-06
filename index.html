@@ -85,6 +85,15 @@
         }
         .nav-btn:hover { background: var(--bg-main); border-color: var(--primary); }
         .nav-btn.active { background: var(--primary); color: white; }
+
+        .cleaning-item { display:flex; align-items:center; gap:0.75rem; padding:0.875rem 1rem; background:var(--bg-card); border-radius:12px; border:2px solid var(--border); margin-bottom:0.5rem; transition:all 0.3s; }
+        .cleaning-item.done { background:#F0FDF4; border-color:#22C55E; }
+        .cleaning-item.today-room { border-color:var(--primary); }
+        .cleaning-room-name { flex:1; font-weight:600; font-size:0.95rem; }
+        .cleaning-item.done .cleaning-room-name { color:#22C55E; }
+        .cleaning-day-select { padding:0.4rem 0.5rem; border-radius:8px; border:1px solid var(--border); background:var(--bg-secondary); font-size:0.82rem; cursor:pointer; }
+        .cleaning-check { width:32px; height:32px; border-radius:50%; border:2px solid var(--border); background:white; cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:1rem; transition:all 0.2s; flex-shrink:0; font-weight:700; }
+        .cleaning-item.done .cleaning-check { background:#22C55E; border-color:#22C55E; color:white; }
         
         .content-section { display: none; padding: 2rem; }
         .content-section.active { display: block; }
@@ -614,6 +623,8 @@
             <button class="nav-btn" data-section="routines">👶 Routines</button>
             <button class="nav-btn" data-section="birthdays">🎂 Birthdays</button>
             <button class="nav-btn" onclick="goToTasks(this)">📝 Tasks</button>
+            <button class="nav-btn" data-section="cleaning">🧹 Cleaning</button>
+            <button class="nav-btn" data-section="overview">🔍 Overview</button>
         </div>
 
         <!-- Dashboard -->
@@ -937,6 +948,7 @@
                     await fetchWeather();
                     loadCalendar();
                 }
+                if (section === 'overview') loadOverview();
             });
         });
 
@@ -1786,6 +1798,7 @@
             loadBirthdays(data.birthdays);
             checkBirthdayAlerts(data.birthdays);
             renderWeekCalendar(data.events, data.birthdays);
+            loadCleaning(data.cleaning);
             updateLeaderboard();
         }
 
@@ -2025,6 +2038,138 @@
                 content.innerHTML = html;
             }
         }
+        // ==================== CLEANING ROTA ====================
+
+        function loadCleaning(rooms) {
+            if (!rooms) return;
+            const days = ['Any','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+            const todayName = getSydneyToday().toLocaleDateString('en-AU', { weekday: 'long', timeZone: 'Australia/Sydney' });
+            const list = document.getElementById('cleaningList');
+            if (!list) return;
+            list.innerHTML = '';
+            const roomEmojis = {
+                'Bathrooms': '🚿', 'Kitchen and Dining': '🍽️',
+                'Lounge and Playroom': '🛋️', 'Bedroom and Hallway': '🛏️', 'Kids Bedrooms': '👶'
+            };
+            rooms.forEach(r => {
+                const isToday = r.assignedDay !== 'Any' && r.assignedDay === todayName;
+                const div = document.createElement('div');
+                div.className = `cleaning-item${r.completed ? ' done' : ''}${isToday && !r.completed ? ' today-room' : ''}`;
+                const emoji = roomEmojis[r.room] || '🏠';
+                const opts = days.map(d => `<option${d === r.assignedDay ? ' selected' : ''}>${d}</option>`).join('');
+                const byLabel = r.completed && r.completedBy
+                    ? `<span style="font-size:0.75rem;color:var(--text-secondary);margin-left:6px;">by ${r.completedBy}</span>` : '';
+                div.innerHTML = `
+                    <span class="cleaning-room-name">${emoji} ${r.room}${byLabel}</span>
+                    <select class="cleaning-day-select" onchange="saveCleaningDay(${r.index}, this.value)">${opts}</select>
+                    <button class="cleaning-check" onclick="toggleCleaning(${r.index})">${r.completed ? '✓' : ''}</button>
+                `;
+                list.appendChild(div);
+            });
+        }
+
+        function saveCleaningDay(index, day) {
+            if (currentData && currentData.cleaning) currentData.cleaning[index].assignedDay = day;
+            apiCall('updateCleaningDay', { index, day });
+        }
+
+        async function toggleCleaning(index) {
+            const person = document.getElementById('cleaningPerson').value;
+            if (!currentData || !currentData.cleaning) return;
+            const room = currentData.cleaning[index];
+            if (!room) return;
+            const nowDone = !room.completed;
+            currentData.cleaning[index].completed = nowDone;
+            currentData.cleaning[index].completedBy = nowDone ? person : '';
+            loadCleaning(currentData.cleaning);
+            if (nowDone) {
+                updateScore(1, person);
+                showToast(`${room.room} marked clean! +1 point`, 'success');
+            }
+            apiCall('toggleCleaningRoom', { index, completedBy: person }).then(() => refreshAllData());
+        }
+
+        // ==================== OVERVIEW ====================
+
+        function loadOverview() {
+            if (!currentData) { document.getElementById('overviewContent').innerHTML = '<div class="loading">Loading...</div>'; return; }
+            const todaySyd = getSydneyToday();
+            const today = toDateStr(todaySyd);
+            const dayName = todaySyd.toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'Australia/Sydney' });
+            const todayEvents     = (currentData.events   || []).filter(e => e.date === today);
+            const pendingTasks    = (currentData.tasks    || []).filter(t => !t.completed);
+            const pendingShopping = (currentData.shopping || []).filter(s => !s.completed);
+            const cleaning        = currentData.cleaning  || [];
+
+            // Group tasks by assignee
+            const byPerson = {};
+            pendingTasks.forEach(t => {
+                const key = t.assignee || 'Unassigned';
+                if (!byPerson[key]) byPerson[key] = [];
+                byPerson[key].push(t);
+            });
+
+            const pts = currentData.points || {};
+            const leaders = Object.entries(pts).sort((a, b) => b[1] - a[1]);
+
+            let html = `<div style="font-size:1.05rem;font-weight:700;color:var(--primary);margin-bottom:1rem;padding:0 0.25rem;">📋 ${dayName}</div>`;
+
+            // Events today
+            html += `<div class="card" style="margin-bottom:0.875rem;padding:1rem;">
+                <div style="font-weight:700;color:var(--primary);margin-bottom:0.5rem;font-size:0.9rem;">📅 TODAY'S EVENTS</div>`;
+            if (todayEvents.length) {
+                todayEvents.forEach(e => {
+                    html += `<div style="padding:0.3rem 0;border-bottom:1px solid var(--border);font-size:0.9rem;">${e.title}${e.time ? `<span style="color:var(--text-secondary);"> at ${e.time}</span>` : ''}</div>`;
+                });
+            } else {
+                html += `<div style="color:var(--text-tertiary);font-style:italic;font-size:0.88rem;">Nothing scheduled today</div>`;
+            }
+            html += `</div>`;
+
+            // Tasks by person
+            if (pendingTasks.length) {
+                html += `<div class="card" style="margin-bottom:0.875rem;padding:1rem;">
+                    <div style="font-weight:700;color:#EF4444;margin-bottom:0.5rem;font-size:0.9rem;">📝 TASKS (${pendingTasks.length} pending)</div>`;
+                Object.entries(byPerson).forEach(([person, tasks]) => {
+                    html += `<div style="margin-bottom:0.5rem;">
+                        <span style="background:var(--primary);color:white;padding:2px 8px;border-radius:8px;font-size:0.78rem;">${person}</span>`;
+                    tasks.forEach(t => { html += `<div style="padding:0.2rem 0 0.2rem 0.75rem;font-size:0.87rem;">• ${t.task}</div>`; });
+                    html += `</div>`;
+                });
+                html += `</div>`;
+            }
+
+            // Cleaning status
+            const doneRooms = cleaning.filter(r => r.completed).length;
+            html += `<div class="card" style="margin-bottom:0.875rem;padding:1rem;">
+                <div style="font-weight:700;color:#22C55E;margin-bottom:0.5rem;font-size:0.9rem;">🧹 CLEANING (${doneRooms}/${cleaning.length} done)</div>`;
+            cleaning.forEach(r => {
+                html += `<div style="padding:0.2rem 0;font-size:0.88rem;color:${r.completed ? '#22C55E' : 'var(--text-tertiary)'};">${r.completed ? '✓' : '○'} ${r.room}</div>`;
+            });
+            html += `</div>`;
+
+            // Shopping
+            if (pendingShopping.length) {
+                html += `<div class="card" style="margin-bottom:0.875rem;padding:1rem;">
+                    <div style="font-weight:700;color:var(--accent);margin-bottom:0.5rem;font-size:0.9rem;">🛒 SHOPPING (${pendingShopping.length} items)</div>`;
+                pendingShopping.forEach(s => { html += `<div style="padding:0.2rem 0;font-size:0.88rem;">• ${s.item}</div>`; });
+                html += `</div>`;
+            }
+
+            // Leaderboard
+            if (leaders.length) {
+                html += `<div class="card" style="padding:1rem;">
+                    <div style="font-weight:700;color:var(--warning);margin-bottom:0.5rem;font-size:0.9rem;">🏆 POINTS</div>`;
+                leaders.forEach(([name, p], i) => {
+                    const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
+                    html += `<div style="display:flex;justify-content:space-between;padding:0.25rem 0;font-size:0.9rem;"><span>${medal} ${name}</span><strong style="color:var(--primary);">${p} pts</strong></div>`;
+                });
+                html += `</div>`;
+            }
+
+            document.getElementById('overviewContent').innerHTML = html;
+        }
+
         // ==================== MORNING SUMMARY MODAL ====================
 
         async function showSummaryModal() {
@@ -2150,6 +2295,29 @@
         }
 
     </script>
+    <!-- Cleaning Rota -->
+    <div class="content-section" id="cleaning">
+        <div class="card">
+            <h2>🧹 Cleaning Rota</h2>
+            <p style="color:var(--text-secondary);font-size:0.85rem;margin-bottom:1rem;">Assign a day to each room and tick when done. Resets every Sunday at 5pm.</p>
+            <div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:1.25rem;padding:0.875rem;background:var(--bg-secondary);border-radius:12px;flex-wrap:wrap;">
+                <label style="font-weight:600;font-size:0.9rem;">Who's cleaning?</label>
+                <select id="cleaningPerson" style="padding:0.4rem 0.75rem;border-radius:8px;border:1px solid var(--border);background:white;font-size:0.9rem;">
+                    <option value="Rob">Rob</option>
+                    <option value="Jessie">Jessie</option>
+                    <option value="Spencer">Spencer</option>
+                    <option value="Grainger">Grainger</option>
+                </select>
+            </div>
+            <div id="cleaningList"><div class="loading">Loading...</div></div>
+        </div>
+    </div>
+
+    <!-- Overview -->
+    <div class="content-section" id="overview">
+        <div id="overviewContent"><div class="loading">Loading...</div></div>
+    </div>
+
     <!-- Morning Summary Modal -->
     <div id="summaryModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:9999;overflow-y:auto;padding:1rem;align-items:flex-start;justify-content:center;">
         <div style="background:white;border-radius:20px;width:100%;max-width:480px;margin:1rem auto;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.3);">
