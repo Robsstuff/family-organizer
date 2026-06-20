@@ -60,6 +60,78 @@ See "Deployment Options" section below
 
 ---
 
+## 🤖 AI Agent, Health Log & Daily Print Setup (new)
+
+This update adds an AI email/quick-capture agent, a Health log, "Rob's Reminders",
+escalating nudges, a weekly digest, two-way Google Calendar sync, and an unattended
+daily printout. Do these steps **in order** — each one depends on the previous.
+
+### Step A: Push the updated Apps Script code
+1. Open your Google Sheet → **Extensions → Apps Script**
+2. Replace the entire contents with the updated `google-apps-script.gs` from this repo
+3. **Save** (Ctrl+S / Cmd+S)
+
+### Step B: Set your Anthropic API key
+The email agent and quick-capture both call Claude (Anthropic) to figure out what's
+an event vs. a task. The key must live server-side only — **never** paste it into
+`index.html`, since that file is public on GitHub Pages.
+1. In the Apps Script editor: **Project Settings** (gear icon, left sidebar)
+2. Scroll to **Script Properties** → **Add script property**
+3. Property: `ANTHROPIC_API_KEY` — Value: your key from console.anthropic.com
+4. **Save**
+
+### Step C: Re-authorize (new permissions)
+This update adds Gmail access and upgrades Calendar from read-only to full read/write.
+Apps Script will ask you to re-approve.
+1. In the Apps Script editor, select **`testCategorization`** from the function dropdown
+2. Click **Run**
+3. A permissions prompt appears — click **Review permissions → [your account] → Advanced → Go to Family Organizer (unsafe) → Allow**
+4. Check the **Executions** log (left sidebar) — you should see two JSON results: a real event extracted from the first test, empty arrays for the second (newsletter-style) test
+
+### Step D: One-time migration + sheet setup
+Run each of these once, from the Apps Script function dropdown → Run:
+1. `migrateAddSourceColumns` — adds the new Source/SourceRef/GCalEventId columns to your existing TodoList and Calendar sheets (safe to re-run, it skips if already done)
+2. `testSetup` — creates the new **Health** sheet tab alongside the existing ones
+
+### Step E: Turn on the new triggers
+Run each of these once:
+1. `createEmailProcessingTrigger` — checks robbukey@gmail.com every 15 minutes from now on
+2. `createNudgeTriggers` — adds midday (12:30pm) and evening (5:30pm) check-ins, but only when something's still pending
+3. `createWeeklyDigestTrigger` — Monday 7:30am email of what fell through the cracks
+
+### Step F: Backfill this year's email
+You asked for the agent to read everything from this year to get started, not just
+unread-going-forward.
+1. Run **`runBackfillNow`** from the function dropdown
+2. Check the Executions log — it'll say how many threads it processed and whether more remain
+3. **Run it again** if it says more remain (each run is capped at ~4.5 minutes to stay under Apps Script's limit) — repeat until it logs "Nothing left to process"
+4. After this, the 15-minute trigger from Step E keeps it current automatically
+
+### Step G: Deploy a new version
+Changing `appsscript.json` scopes or any `.gs` code needs a new deployment version
+for the public Web App URL to pick it up:
+1. **Deploy → Manage deployments**
+2. Click the pencil (edit) icon on the active deployment
+3. **Version → New version → Deploy**
+4. The existing Web App URL stays the same — no need to update `index.html`'s `API_URL`
+
+### Step H: Daily printout (optional, local to your PC)
+`PrintDailySheet.ps1` lives at `C:\Scripts\PrintDailySheet.ps1` on this computer (not
+in this repo — it's machine-specific and has no secrets in it, just a public read
+endpoint). It calls the new `getPrintSheet` endpoint and prints a plain-text "today"
+sheet to your default printer.
+1. **Test it manually first**, in a PowerShell prompt: `& "C:\Scripts\PrintDailySheet.ps1"` — confirm it actually prints something sensible (and check `print-log.txt` on your Desktop)
+2. Only once that looks right, register it to run automatically every morning:
+   ```powershell
+   $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument '-NoProfile -ExecutionPolicy Bypass -File "C:\Scripts\PrintDailySheet.ps1"'
+   $trigger = New-ScheduledTaskTrigger -Daily -At 7:15AM
+   $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -DontStopOnIdleEnd
+   Register-ScheduledTask -TaskName "FamilyOrganizerDailyPrint" -Action $action -Trigger $trigger -Settings $settings -Description "Prints daily family organizer sheet"
+   ```
+3. This needs your PC and printer on/ready at 7:15am — if the PC was asleep, `-StartWhenAvailable` means it still prints once it wakes up, just late.
+
+---
+
 ## 🔧 Detailed Configuration
 
 ### Google Calendar Integration
@@ -285,6 +357,11 @@ After setup, test these features:
 - [ ] Refresh page → data persists
 - [ ] Close browser, reopen → data still there
 - [ ] Try on phone → works on mobile
+- [ ] Log a Health entry → appears in Health tab
+- [ ] Send yourself a test email with an obvious event/task → appears in Tasks/Calendar within 15 min, tagged "via email"
+- [ ] Use the ✏️ Quick Capture button → note files into Tasks or Calendar, tagged "via quick capture"
+- [ ] Add an event in-app → check it also appears in your real Google Calendar (and your phone gets a notification)
+- [ ] Check "Rob's Reminders" card on the Dashboard shows your unassigned/Rob-assigned pending tasks with zero clicks
 
 ---
 
@@ -315,6 +392,22 @@ After setup, test these features:
 - Check Google Calendar timezone settings
 - Verify Apps Script has Australia/Sydney
 - Redeploy Apps Script
+
+### "Email agent isn't adding anything"
+- Check `ANTHROPIC_API_KEY` is set in Script Properties (Project Settings)
+- Check you re-authorized after the scope change (Step C above) — re-run `testCategorization` if unsure
+- Check the email actually has a concrete date/action — newsletters and receipts are deliberately ignored
+- Check the thread doesn't already have the `FamilyOrganizer/Processed` Gmail label (it won't be reprocessed)
+
+### "Two-way Calendar sync isn't showing on my phone"
+- Confirm you re-authorized the upgraded `calendar` (not `calendar.readonly`) scope
+- Confirm you deployed a new version after the scope change (Step G above)
+- Check the Calendar app on your phone is signed into robbukey@gmail.com
+
+### "Daily printout didn't print"
+- Run `& "C:\Scripts\PrintDailySheet.ps1"` manually and read the error
+- Check `print-log.txt` on the Desktop for the last attempt's result
+- Confirm the PC was awake and the printer was on/ready at the scheduled time
 
 ---
 

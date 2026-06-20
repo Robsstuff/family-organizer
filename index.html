@@ -629,6 +629,7 @@
             <button class="nav-btn" data-section="birthdays">🎂 Birthdays</button>
             <button class="nav-btn" onclick="goToTasks(this)">📝 Tasks</button>
             <button class="nav-btn" data-section="cleaning">🧹 Cleaning</button>
+            <button class="nav-btn" data-section="health">💪 Health</button>
             <button class="nav-btn" data-section="overview">🔍 Overview</button>
         </div>
 
@@ -645,7 +646,12 @@
                     <div class="week-calendar" id="weekCalendar"></div>
                 </div>
             </div>
-            
+
+            <div class="card" id="robsRemindersCard" style="border:2px solid var(--accent);">
+                <h2>📌 Rob's Reminders</h2>
+                <div id="robsRemindersList"><div class="loading">Loading...</div></div>
+            </div>
+
             <div class="dashboard-grid">
                 <div class="dashboard-section" id="todoSectionDash">
                     <h3>📝 To-Do List</h3>
@@ -954,6 +960,7 @@
                     loadCalendar();
                 }
                 if (section === 'overview') loadOverview();
+                if (section === 'health') loadHealth();
             });
         });
 
@@ -1101,7 +1108,9 @@
                         const p = task.priority.charAt(0).toUpperCase() + task.priority.slice(1);
                         badges.push(`<span class="task-badge badge-priority-${task.priority}">${p}</span>`);
                     }
-                    
+                    if (task.source === 'email') badges.push(`<span class="task-badge" style="background:#8B5CF6;color:white;">via email</span>`);
+                    if (task.source === 'quick_capture') badges.push(`<span class="task-badge" style="background:#0EA5E9;color:white;">via quick capture</span>`);
+
                     li.innerHTML = `
                         <div style="flex: 1;">
                             <div class="todo-text">${task.task}</div>
@@ -1294,6 +1303,26 @@
             }
         }
 
+        // "Rob's Reminders" — pinned to the Dashboard (zero clicks needed) rather than
+        // a separate tab, so it's the one thing always visible without navigating.
+        function loadRobsReminders() {
+            const list = document.getElementById('robsRemindersList');
+            if (!list || !currentData) return;
+            const mine = (currentData.tasks || []).filter(t => !t.completed && (!t.assignee || t.assignee === 'Rob'));
+            if (!mine.length) {
+                list.innerHTML = '<div class="loading">Nothing outstanding — you\'re clear!</div>';
+                return;
+            }
+            list.innerHTML = mine.map(t => {
+                const sourceBadge = t.source === 'email' ? `<span class="task-badge" style="background:#8B5CF6;color:white;">via email</span>`
+                    : t.source === 'quick_capture' ? `<span class="task-badge" style="background:#0EA5E9;color:white;">via quick capture</span>` : '';
+                return `<div style="padding:0.5rem 0;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:0.75rem;">
+                    <span>${t.task} ${sourceBadge}</span>
+                    <button class="btn-complete" onclick="completeTask(${t.index}, 'Rob')">Done</button>
+                </div>`;
+            }).join('');
+        }
+
         async function deleteEvent(index) {
             if (!confirm('Are you sure you want to delete this event?')) return;
 
@@ -1417,15 +1446,20 @@
                     weatherHTML = `<div class="event-weather"><span>${weather.emoji}</span><span style="font-weight: 600;">${weather.temp}°C</span><span>${weather.description}</span></div>`;
                 }
                 
-                const sourceBadge = event.source === 'calendar' 
+                // A real Google Calendar entry the app has no sheet row for (added
+                // directly in Google Calendar, not via this app) has no index.
+                const isExternalCalendarEvent = event.index === undefined;
+                const sourceBadge = isExternalCalendarEvent
                     ? '<span style="background: #34A853; color: white; padding: 3px 8px; border-radius: 6px; font-size: 0.75rem; margin-left: 8px;">📅 Google Calendar</span>'
+                    : event.createdVia === 'email' ? '<span style="background: #8B5CF6; color: white; padding: 3px 8px; border-radius: 6px; font-size: 0.75rem; margin-left: 8px;">via email</span>'
+                    : event.createdVia === 'quick_capture' ? '<span style="background: #0EA5E9; color: white; padding: 3px 8px; border-radius: 6px; font-size: 0.75rem; margin-left: 8px;">via quick capture</span>'
                     : '';
-                
-                // Only show delete button for events from the app (not Google Calendar)
-                const deleteButton = event.source !== 'calendar' && event.index !== undefined
+
+                // Only show delete button for events the app is tracking (i.e. has a sheet row for)
+                const deleteButton = !isExternalCalendarEvent
                     ? `<button onclick="deleteEvent(${event.index})" style="position: absolute; top: 1rem; right: 1rem; background: var(--danger); color: white; border: none; padding: 0.5rem 1rem; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 0.875rem; transition: all 0.2s;" onmouseover="this.style.background='#DC2626'" onmouseout="this.style.background='var(--danger)'">🗑️ Delete</button>`
                     : '';
-                
+
                 div.innerHTML = `
                     ${deleteButton}
                     <div class="event-title">${event.title}${sourceBadge}</div>
@@ -1602,10 +1636,13 @@
                 content += `<div class="modal-section">
                     <div class="modal-section-title">📅 Events</div>`;
                 dayEvents.forEach(event => {
-                    const sourceBadge = event.source === 'calendar'
+                    const isExternalCalendarEvent = event.index === undefined;
+                    const sourceBadge = isExternalCalendarEvent
                         ? '<span style="background: #34A853; color: white; padding: 3px 8px; border-radius: 6px; font-size: 0.75rem; margin-left: 8px;">📅 Google Calendar</span>'
+                        : event.createdVia === 'email' ? '<span style="background: #8B5CF6; color: white; padding: 3px 8px; border-radius: 6px; font-size: 0.75rem; margin-left: 8px;">via email</span>'
+                        : event.createdVia === 'quick_capture' ? '<span style="background: #0EA5E9; color: white; padding: 3px 8px; border-radius: 6px; font-size: 0.75rem; margin-left: 8px;">via quick capture</span>'
                         : '';
-                    const deleteBtn = event.source !== 'calendar' && event.index !== undefined
+                    const deleteBtn = !isExternalCalendarEvent
                         ? `<button onclick="deleteEvent(${event.index});closeDayModal();" style="margin-top:0.5rem;background:var(--danger);color:white;border:none;padding:0.3rem 0.75rem;border-radius:8px;font-weight:600;font-size:0.8rem;cursor:pointer;">🗑️ Delete</button>`
                         : '';
                     content += `
@@ -1804,6 +1841,8 @@
             checkBirthdayAlerts(data.birthdays);
             renderWeekCalendar(data.events, data.birthdays);
             loadCleaning(data.cleaning);
+            loadHealth(data.health);
+            loadRobsReminders();
             updateLeaderboard();
         }
 
@@ -2094,6 +2133,45 @@
             apiCall('toggleCleaningRoom', { index, completedBy: person }).then(() => refreshAllData());
         }
 
+        // ==================== HEALTH ====================
+
+        function loadHealth(entries) {
+            if (entries && currentData) currentData.health = entries;
+            const list = document.getElementById('healthList');
+            if (!list) return;
+            const all = (currentData && currentData.health) || entries || [];
+            if (!all.length) { list.innerHTML = '<div class="loading">No entries yet — log your first activity above!</div>'; return; }
+            const sorted = [...all].sort((a, b) => new Date(b.date) - new Date(a.date));
+            list.innerHTML = sorted.map(h => `
+                <div class="card" style="margin-bottom:0.6rem;padding:0.85rem;">
+                    <div style="display:flex;justify-content:space-between;align-items:baseline;">
+                        <strong>${h.activity}</strong>
+                        <span style="color:var(--text-secondary);font-size:0.8rem;">${new Date(h.date).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}</span>
+                    </div>
+                    ${h.duration ? `<span class="task-badge badge-assignee">${h.duration}</span>` : ''}
+                    ${h.notes ? `<div style="margin-top:0.4rem;font-size:0.88rem;color:var(--text-secondary);">${h.notes}</div>` : ''}
+                </div>
+            `).join('');
+        }
+
+        async function addHealthEntry() {
+            const activity = document.getElementById('newHealthActivity').value.trim();
+            const duration = document.getElementById('newHealthDuration').value.trim();
+            const notes = document.getElementById('newHealthNotes').value.trim();
+            if (!activity) return alert('Please enter an activity!');
+            document.getElementById('newHealthActivity').value = '';
+            document.getElementById('newHealthDuration').value = '';
+            document.getElementById('newHealthNotes').value = '';
+            const date = new Date().toISOString();
+            if (currentData) {
+                if (!currentData.health) currentData.health = [];
+                currentData.health.push({ activity, duration, notes, date, addedDate: date, index: currentData.health.length });
+                loadHealth();
+            }
+            showToast('Activity logged!', 'success');
+            apiCall('addHealthEntry', { activity, duration, notes, date }).then(() => refreshAllData());
+        }
+
         // ==================== OVERVIEW ====================
 
         function loadOverview() {
@@ -2318,6 +2396,23 @@
         </div>
     </div>
 
+    <!-- Health -->
+    <div class="content-section" id="health">
+        <div class="card">
+            <h2>💪 Health Log</h2>
+            <p style="color:var(--text-secondary);font-size:0.85rem;margin-bottom:1rem;">Log whatever you're doing — walks, gym, stretching, physio. Want a daily reminder to do something? Add it as a recurring task on the Dashboard instead.</p>
+            <div class="input-group">
+                <input type="text" id="newHealthActivity" placeholder="Activity (e.g. Walk, Gym, Stretching)...">
+                <input type="text" id="newHealthDuration" placeholder="Duration (optional)" style="max-width:140px;">
+            </div>
+            <div class="input-group">
+                <textarea id="newHealthNotes" placeholder="Notes (optional)"></textarea>
+                <button class="btn btn-accent" onclick="addHealthEntry()">Log It</button>
+            </div>
+            <div id="healthList"><div class="loading">Loading...</div></div>
+        </div>
+    </div>
+
     <!-- Overview -->
     <div class="content-section" id="overview">
         <div id="overviewContent"><div class="loading">Loading...</div></div>
@@ -2340,6 +2435,38 @@
             </div>
         </div>
     </div>
+    <!-- Quick Capture — floating action button, visible from every tab. A stray
+         thought shouldn't require navigating to the right tab before you can jot it down. -->
+    <button id="quickCaptureFab" onclick="openQuickCapture()" style="position:fixed;bottom:1.5rem;right:1.5rem;width:60px;height:60px;border-radius:50%;background:var(--accent);color:white;font-size:1.6rem;border:none;box-shadow:0 4px 12px rgba(0,0,0,0.25);z-index:9000;cursor:pointer;">✏️</button>
+
+    <div id="quickCaptureModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:9999;align-items:center;justify-content:center;padding:1rem;">
+        <div style="background:white;border-radius:16px;padding:1.5rem;width:100%;max-width:420px;">
+            <h3 style="margin-top:0;">✏️ Quick Capture</h3>
+            <textarea id="quickCaptureText" rows="4" style="width:100%;padding:0.6rem;border-radius:8px;border:1px solid var(--border);font-family:inherit;" placeholder="Jot it down — I'll file it for you..."></textarea>
+            <div style="display:flex;gap:0.5rem;margin-top:0.75rem;justify-content:flex-end;">
+                <button class="btn" onclick="closeQuickCapture()" style="background:var(--bg-secondary);color:var(--text-primary);">Cancel</button>
+                <button class="btn btn-accent" onclick="submitQuickCapture()">Capture</button>
+            </div>
+        </div>
+    </div>
+    <script>
+        function openQuickCapture() {
+            document.getElementById('quickCaptureModal').style.display = 'flex';
+            document.getElementById('quickCaptureText').focus();
+        }
+        function closeQuickCapture() {
+            document.getElementById('quickCaptureModal').style.display = 'none';
+            document.getElementById('quickCaptureText').value = '';
+        }
+        async function submitQuickCapture() {
+            const text = document.getElementById('quickCaptureText').value.trim();
+            if (!text) return;
+            closeQuickCapture();
+            showToast('Captured — filing it now...', 'success');
+            const result = await apiCall('quickCapture', { text });
+            if (result) await refreshAllData();
+        }
+    </script>
     <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-messaging-compat.js"></script>
 </body>
