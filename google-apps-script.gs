@@ -521,6 +521,19 @@ function addEvent(data) {
 function deleteEvent(data) {
   const sheet = getSheet(SHEET_NAMES.CALENDAR);
   const rowIndex = data.index + 2; // +2 because: 1-indexed and skip header
+  const gcalEventId = sheet.getRange(rowIndex, 8).getValue(); // column H
+
+  if (gcalEventId) {
+    try {
+      const calendar = CalendarApp.getCalendarById(CALENDAR_ID);
+      const calEvent = calendar ? calendar.getEventById(gcalEventId) : null;
+      if (calEvent) calEvent.deleteEvent();
+    } catch (e) {
+      Logger.log('deleteEvent: failed to remove Google Calendar event ' + gcalEventId + ': ' + e.toString());
+      // Fall through — still delete the sheet row so it disappears from the app either way.
+    }
+  }
+
   sheet.deleteRow(rowIndex);
   return { success: true };
 }
@@ -1096,8 +1109,10 @@ const ANTHROPIC_MODEL = 'claude-haiku-4-5-20251001'; // cheap/fast, plenty capab
 const CATEGORIZATION_SYSTEM_PROMPT = `You extract actionable calendar events and to-do tasks from short pieces of text (emails or quick notes) for a busy parent. Respond with ONLY a JSON object, no prose, no markdown fences, matching this exact shape:
 {"events":[{"title":"string","date":"YYYY-MM-DD","time":"HH:MM or empty string","description":"string"}],"tasks":[{"task":"string","priority":"high|medium|low"}]}
 Rules:
-- If the text is a newsletter, receipt, marketing email, automated notification, or contains no concrete date/action for the recipient personally, return {"events":[],"tasks":[]}.
-- Only extract an event if a specific date (or clearly resolvable relative date like "next Tuesday") is present.
+- If the text is a newsletter, receipt, marketing email, automated notification, promotional event listing, or "what's on" guide, return {"events":[],"tasks":[]} — even if it mentions real dates.
+- A date being mentioned is NOT enough to extract an event. Only extract an event if there is clear evidence the recipient personally is attending or booked for it — e.g. a ticket confirmation, booking/order reference, "your booking", "your reservation", "your tickets", a calendar invite, or a personal message confirming attendance.
+- A venue, comedy club, board game cafe, theatre, etc. emailing about "upcoming shows this month", "events near you", or anything generally on sale is advertising, not a personal commitment — ignore it, even though it has real dates and looks event-like.
+- When genuinely unsure whether the recipient is personally attending vs. just being advertised to, do NOT extract an event — skip it rather than guess.
 - Only extract a task if there is a concrete action the recipient must personally take.
 - Never invent dates, times, or details not present in the source text.
 - Resolve relative dates (e.g. "tomorrow", "next Friday") against the provided "today" date.
@@ -1174,10 +1189,12 @@ function categorizeWithClaude(sourceType, sourceText, sourceMeta) {
 // click Run) and check the Executions log to confirm the API key + prompt work
 // before turning on the email trigger.
 function testCategorization() {
-  Logger.log('--- Actionable test ---');
+  Logger.log('--- Actionable test (should return a real event) ---');
   Logger.log(JSON.stringify(categorizeWithClaude('test', 'Reminder: school assembly next Tuesday at 9am, please arrive 10 minutes early.', null)));
-  Logger.log('--- Non-actionable test ---');
+  Logger.log('--- Non-actionable test (should return empty) ---');
   Logger.log(JSON.stringify(categorizeWithClaude('test', 'Unsubscribe from our newsletter anytime! 20% off everything this week only, shop now.', null)));
+  Logger.log('--- Promotional event listing test (should ALSO return empty — has a real date but is not a personal booking) ---');
+  Logger.log(JSON.stringify(categorizeWithClaude('test', 'Whats On This Month at The Laugh Track: catch our headline comedy night this Saturday 8pm, tickets from $35 still available. Plus board game social every Thursday — drop in any time, all welcome!', null)));
 }
 
 // ==================== EMAIL AGENT ====================
