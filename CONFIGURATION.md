@@ -70,6 +70,14 @@ daily printout. Do these steps **in order** — each one depends on the previous
 1. Open your Google Sheet → **Extensions → Apps Script**
 2. Replace the entire contents with the updated `google-apps-script.gs` from this repo
 3. **Save** (Ctrl+S / Cmd+S)
+4. The Apps Script editor hides the permissions manifest by default — click the
+   **gear icon (Project Settings)** in the left sidebar and tick **"Show
+   'appsscript.json' manifest file in editor"**, then open `appsscript.json`
+   (now visible in the file list) and replace it with the updated `appsscript.json`
+   from this repo too. **This step is easy to miss and will cause a
+   "Specified permissions are not sufficient" error later (Step C/F) if skipped** —
+   the old scopes list has no Gmail access and read-only Calendar at all.
+5. **Save** (Ctrl+S / Cmd+S)
 
 ### Step B: Set your Anthropic API key
 The email agent and quick-capture both call Claude (Anthropic) to figure out what's
@@ -392,6 +400,13 @@ After setup, test these features:
 - Check Google Calendar timezone settings
 - Verify Apps Script has Australia/Sydney
 - Redeploy Apps Script
+
+### "Exception: Specified permissions are not sufficient... gmail.modify"
+- The manifest (`appsscript.json`) still has the old scope list — it's hidden by
+  default in the editor. Project Settings → tick "Show appsscript.json manifest
+  file in editor" → open it → paste in the updated scopes from this repo → Save
+- Then re-run `testCategorization` (or any function) to trigger the new
+  permissions prompt, and accept it before retrying `runBackfillNow`/the email trigger
 
 ### "Email agent isn't adding anything"
 - Check `ANTHROPIC_API_KEY` is set in Script Properties (Project Settings)
