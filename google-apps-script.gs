@@ -1214,7 +1214,10 @@ function getOrCreateProcessedLabel() {
 }
 
 function emailSearchQuery() {
-  return 'in:inbox after:' + EMAIL_BACKFILL_AFTER + ' -label:"' + PROCESSED_LABEL_NAME + '"';
+  // -category:promotions skips Gmail's Promotions tab entirely (marketing/newsletter
+  // noise like "$5 off your order" or venue "what's on" emails) before it ever reaches
+  // Claude — cheaper and more reliable than relying on the prompt alone to reject it.
+  return 'in:inbox after:' + EMAIL_BACKFILL_AFTER + ' -category:promotions -label:"' + PROCESSED_LABEL_NAME + '"';
 }
 
 // Shared per-thread handler used by both the ongoing trigger and the manual
